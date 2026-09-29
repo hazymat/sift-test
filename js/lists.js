@@ -5,8 +5,9 @@
 //   list_items: list_id, text, parent_id? (one level), sort_order, checked_at?
 
 import * as store from './store.js';
+import { byRank } from './order.js';
 
-const byOrder = (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.created_at.localeCompare(b.created_at);
+const byOrder = byRank(); // order.js: merges cleanly across devices
 const same = (a, b) => (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
 
 export async function loadLists() {

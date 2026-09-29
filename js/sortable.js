@@ -12,12 +12,48 @@
 //   press and move straight away → onPaint(firstItem, itemUnderPointer) (swipe-select)
 //   press and hold, then drag → drag as above (onLift(item) when it lifts)
 
-export function sortable(list, { handle = '.drag-handle', holdMs = 0, keyboard = true, onMove, onEnd, onTap, onPaint, onLift, onDrag } = {}) {
+// With `anywhere` (a hold in ms): press and hold anywhere on a row (not on its
+// buttons or tick box; also while its name is being edited) lifts it too
+// (hold.js: the shading, and the keyboard kept down).
+// While dragging, the other rows slide out of the way (not jump). onDrag({ item,
+// dx, dy }) may return the sideways shift to show (e.g. snapped to a depth).
+
+// With `grid: true` the items sit in rows and columns (cards): the dragged one
+// follows the pointer both ways and drops into the card it is over.
+//
+// With `onOnto(target | null)`, the middle of a row means "onto it" (e.g. make
+// it a sub-task) rather than before or after it: the list isn't reordered
+// there, onOnto says which row it's over, and onEnd gets it as `onto`. While
+// over it, the dragged row shows where it will land: just under that row and
+// its sub-rows, with room made there (.nest-room). The
+// gap it would drop into otherwise has the same dashed outline (.drop-slot),
+// so there's always one outline saying where it will land.
+import { holdToLift, HOLD_SKIP } from './hold.js';
+
+export function sortable(list, { handle = '.drag-handle', holdMs = 0, anywhere = 0, keyboard = true, grid = false, onMove, onEnd, onTap, onPaint, onLift, onDrag, onOnto } = {}) {
+  let onto = null; // the row the dragged one is over the middle of (onOnto)
+  const setOnto = el => {
+    if (el === onto) return;
+    onto = el;
+    onOnto?.(el);
+    if (slot) slot.hidden = !!el;
+    // Room just under the row's family, where the dragged one shows as its sub-item (follow).
+    for (const r of list.querySelectorAll(':scope > .nest-room')) r.classList.remove('nest-room');
+    const end = el && familyEnd(el);
+    if (end && visibleAfter(end) !== dragging) { end.style.setProperty('--room', `${dragging.getBoundingClientRect().height}px`); end.classList.add('nest-room'); }
+  };
+  const depth = el => Number(el.dataset.depth || 0);
+  const visibleAfter = el => { let n = el.nextElementSibling; while (n && n.hidden) n = n.nextElementSibling; return n; };
+  // A row and the rows nested under it: the last of them.
+  const familyEnd = row => { let end = row; for (let n = visibleAfter(row); n && n !== dragging && n.matches('li[data-id]') && depth(n) > depth(row); n = visibleAfter(n)) end = n; return end; };
+  let slot = null; // the dashed outline of the gap it will drop into (with onOnto)
   let dragging = null;
   let pending = null; // pressed; waiting to see if it's a tap, swipe or hold
   let painting = null;
   let offsetY = 0;
+  let offsetX = 0;
   let startX = 0;
+  let startY = 0;
   let lastX = 0;
   let lastY = 0;
 
@@ -30,39 +66,99 @@ export function sortable(list, { handle = '.drag-handle', holdMs = 0, keyboard =
       || (y < rows[0]?.getBoundingClientRect().top ? rows[0] : rows.at(-1));
   };
 
+  // The other rows slide to their new places rather than jump (from where they're showing now).
+  function slid(move) {
+    const others = siblings();
+    const was = new Map(others.map(el => [el, el.getBoundingClientRect().top]));
+    for (const el of others) for (const a of el.getAnimations()) if (a.id === 'make-room') a.cancel();
+    move();
+    for (const el of others) {
+      const d = was.get(el) - el.getBoundingClientRect().top;
+      if (Math.abs(d) > 1) el.animate([{ transform: `translateY(${d}px)` }, { transform: 'none' }], { duration: 150, easing: 'cubic-bezier(.2, .8, .2, 1)', id: 'make-room' });
+    }
+  }
+
   // Where the dragged item's visual centre now is, so the DOM follows it.
-  function place(clientY) {
+  function place(clientY, clientX = 0) {
+    if (grid) {
+      // The card under the pointer (its middle part, so cards of different sizes don't jitter).
+      const under = siblings().find(el => {
+        const r = el.getBoundingClientRect();
+        return clientX > r.left + r.width * 0.2 && clientX < r.right - r.width * 0.2 && clientY > r.top + r.height * 0.2 && clientY < r.bottom - r.height * 0.2;
+      });
+      if (!under) return;
+      if (dragging.compareDocumentPosition(under) & Node.DOCUMENT_POSITION_PRECEDING) list.insertBefore(dragging, under); else under.after(dragging);
+      onMove?.(dragging);
+      return;
+    }
+    if (onOnto) {
+      // Over the middle of a row (all but a thin band at its top and bottom edges, so a
+      // tall row's name counts too): onto it, no reordering.
+      const over = siblings().find(el => { const r = el.getBoundingClientRect(), edge = Math.min(r.height / 3, 14); return clientY > r.top + edge && clientY < r.bottom - edge; });
+      setOnto(over || null);
+      if (over) return;
+    }
     for (const el of siblings()) {
       const r = el.getBoundingClientRect();
       const mid = r.top + r.height / 2;
       const before = dragging.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING;
       if (before && clientY < mid) {
-        list.insertBefore(dragging, el);
+        slid(() => list.insertBefore(dragging, el));
         onMove?.(dragging);
         return;
       }
       if (!before && clientY > mid && el.nextElementSibling !== dragging) {
-        el.after(dragging);
+        slid(() => el.after(dragging));
         onMove?.(dragging);
       }
     }
   }
 
-  function follow(clientY) {
+  function follow(clientY, clientX = 0) {
     // Translate so the item stays under the finger even after DOM moves.
     dragging.style.transform = '';
-    const top = dragging.getBoundingClientRect().top;
-    dragging.style.transform = `translate(var(--dx, 0px), ${clientY - offsetY - top}px)`;
+    const box = dragging.getBoundingClientRect();
+    // Where it is in the list, before it's moved to follow the pointer; its corners as the row's are now (e.g. coming out of a group).
+    if (slot) Object.assign(slot.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px`, borderRadius: getComputedStyle(dragging).borderRadius });
+    // Over a row's middle: it shows where it will land, under that row's family, not under the finger.
+    if (onto && !grid) { dragging.style.transform = `translate(var(--dx, 0px), ${familyEnd(onto).getBoundingClientRect().bottom - box.top}px)`; return; }
+    dragging.style.transform = grid
+      ? `translate(${clientX - offsetX - box.left}px, ${clientY - offsetY - box.top}px)`
+      : `translate(var(--dx, 0px), ${clientY - offsetY - box.top}px) rotate(-.8deg)`; // a slight twist while carried, as in the Day Planner
   }
 
   function lift(item, x, y) {
     dragging = item;
     offsetY = y - item.getBoundingClientRect().top;
+    offsetX = x - item.getBoundingClientRect().left;
     startX = lastX = x;
+    startY = lastY = y;
     item.classList.add('dragging');
     onLift?.(item);
+    if (onOnto && !grid) {
+      slot = document.createElement('div');
+      slot.className = 'drop-slot';
+      slot.setAttribute('aria-hidden', 'true');
+      slot.style.borderRadius = getComputedStyle(item).borderRadius;
+      document.body.append(slot);
+      follow(y, x);
+    }
     navigator.vibrate?.(10);
   }
+
+  // A hold anywhere on a row lifts it too (hold.js).
+  const hold = anywhere ? holdToLift(list, {
+    rowAt: t => { const li = t.closest('li'); return li && li.parentElement === list && !li.hidden ? li : null; },
+    skip: `${handle}, ${HOLD_SKIP}`,
+    ms: anywhere,
+    busy: () => !!dragging,
+    onLift: (li, x, y, pointerId) => {
+      li.dispatchEvent(new CustomEvent('sortable-lift', { bubbles: true })); // e.g. its editing pills close
+      try { list.setPointerCapture(pointerId); } catch {}
+      lastX = x; lastY = y;
+      lift(li, x, y);
+    },
+  }) : null;
 
   list.addEventListener('pointerdown', e => {
     const grip = e.target.closest(handle);
@@ -99,13 +195,17 @@ export function sortable(list, { handle = '.drag-handle', holdMs = 0, keyboard =
     }
     if (!dragging) return;
     // onDrag may return the sideways shift to show (e.g. snapped to a depth).
-    const shown = onDrag?.({ item: dragging, dx: lastX - startX });
-    dragging.style.setProperty('--dx', `${shown ?? Math.max(-40, Math.min(40, lastX - startX))}px`);
-    place(e.clientY);
-    follow(e.clientY);
+    if (!grid) {
+      const shown = onDrag?.({ item: dragging, dx: lastX - startX, dy: lastY - startY });
+      dragging.style.setProperty('--dx', `${shown ?? Math.max(-40, Math.min(40, lastX - startX))}px`);
+    }
+    place(e.clientY, e.clientX);
+    follow(e.clientY, e.clientX);
   });
 
   const finish = e => {
+    hold?.cancel();
+    hold?.letGo();
     if (pending) {
       clearTimeout(pending.timer);
       const { item, event } = pending;
@@ -119,11 +219,15 @@ export function sortable(list, { handle = '.drag-handle', holdMs = 0, keyboard =
     }
     if (!dragging) return;
     const item = dragging;
+    slot?.remove();
+    slot = null;
     item.classList.remove('dragging');
     item.style.transform = '';
     item.style.removeProperty('--dx');
     dragging = null;
-    onEnd?.({ item, dx: lastX - startX });
+    const target = onto;
+    if (onto) setOnto(null);
+    onEnd?.({ item, dx: lastX - startX, onto: target });
   };
   list.addEventListener('pointerup', finish);
   list.addEventListener('pointercancel', finish);

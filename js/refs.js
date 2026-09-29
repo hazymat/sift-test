@@ -6,9 +6,12 @@
 
 import * as store from './store.js';
 import { createContact, CAPTURED_HEADING } from './contacts.js';
+import { readDraft } from './drafts.js';
+import { pointTo } from './flash.js';
+import { dateText } from './days.js';
 
 const firstLine = s => (s || '').split('\n').map(l => l.trim()).find(Boolean) || '';
-const niceDate = d => (d ? new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) : '');
+const niceDate = d => (d ? dateText(new Date(`${d}T12:00`), { weekday: 'short', day: 'numeric', month: 'short' }) : '');
 export const unlinkText = s => (s || '').replace(/\[([^\]]*)\]\(sift:[^)]*\)/g, '$1');
 
 // Each kind: how to name it, what to search, where it lives.
@@ -62,6 +65,16 @@ export const KINDS = {
     title: i => i.text || '(item)', sub: () => 'Lists',
     text: i => `${i.text} ${i.notes || ''}`, route: i => `#/lists/${i.list_id}`,
   },
+  scans: {
+    label: 'Scan', icon: '🧾',
+    title: s => s.title || '(scan)', sub: s => `Scans${s.summary ? ` · ${s.summary}` : ''}`,
+    text: s => `${s.title} ${s.summary || ''} ${s.note || ''}`, route: s => `#/scans/${s.id}`,
+  },
+  contracts: {
+    label: 'Contract', icon: '📑',
+    title: c => c.name || c.provider || '(contract)', sub: c => `Contracts${c.provider ? ` · ${c.provider}` : ''}`,
+    text: c => `${c.name} ${c.provider || ''} ${c.covers || ''} ${c.notes || ''}`, route: c => `#/contracts/${c.id}`,
+  },
   lists: {
     label: 'List', icon: '📋',
     title: l => l.name || '(list)', sub: () => 'Lists',
@@ -108,8 +121,17 @@ export async function openRef(ref) {
   const [collection, id] = ref.split('/');
   const kind = KINDS[collection];
   const r = kind && await store.get(collection, id, { includeDeleted: true });
-  if (!r || r.purged_at) return (await import('./toast.js')).toast('That has been deleted');
-  if (r.deleted_at) return (await import('./toast.js')).toast('That is in the Bin');
+  const say = async text => (await import('./toast.js')).toast(text);
+  // A Brain Dump note still being typed in the New note box (not saved yet).
+  if (!r && collection === 'thoughts' && readDraft('dump:id') === id) {
+    pointTo('capture', id);
+    location.hash = '#/dump';
+    return;
+  }
+  const what = collection === 'thoughts' ? 'The note this came from' : 'That';
+  if (!r || r.purged_at) return say(`${what} was deleted (it's no longer in the Bin)`);
+  if (r.deleted_at) return say(`${what} is in the Bin`);
+  pointTo(collection, id); // it pulses when you get there (flash.js)
   location.hash = kind.route(r);
 }
 

@@ -7,6 +7,7 @@
 //                              context changes (e.g. the planner's day)
 //   draftCleared(textarea)     after adding: forget the draft
 //   readDraft(key) / writeDraft(key, text) for editors that aren't textareas
+//   textarea._asText()         if set, what's kept instead of its value (comments: with links)
 
 const slot = key => `sift:draft:${key}`;
 
@@ -27,7 +28,7 @@ export function keepDraft(el, key) {
   if (!el.value) el.value = readDraft(k());
   if (!el._draftWired) {
     el._draftWired = true;
-    el.addEventListener('input', () => writeDraft(el._draftKey(), el.value));
+    el.addEventListener('input', () => writeDraft(el._draftKey(), el._asText ? el._asText() : el.value));
   }
   return { restore: () => { el.value = readDraft(k()); } };
 }

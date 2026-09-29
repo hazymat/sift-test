@@ -27,13 +27,13 @@ function cleanCut(text, i) {
 }
 
 const tidy = s => {
-  const t = s.replace(FILLER, '').replace(/[\s,;:.–—-]+$/, '').trim();
+  const t = s.replace(FILLER, '').replace(/[\s,;:.\u2013\u2014-]+$/, '').trim();
   return t ? t[0].toUpperCase() + t.slice(1) : t;
 };
 
 // A title for free text (like iPhone Notes): its first line, without
 // markdown or link syntax, shortened if it's long.
-export const cleanLine = line => line.trim().replace(/\[([^\]]*)\]\(sift:[^)]*\)/g, '$1').replace(/^#{1,6}\s+/, '').replace(/^[-*•]\s+/, '')
+export const cleanLine = line => line.trim().replace(/\[([^\]]*)\]\(sift:[^)]*\)/g, '$1').replace(/^(?:#{1,6}|-#|\+#|#\+)\s+/, '').replace(/^[-*•]\s+/, '')
   .replace(/\*\*|~~/g, '').replace(/(^|\s)_(\S.*?)_(?=$|[\s).,!?:;])/g, '$1$2').trim();
 
 export function titleFrom(text) {
@@ -52,7 +52,7 @@ export function summarise(text, max = MAX) {
   for (let i = min; i < whole.length - 1; i++) {
     if (/[:,.]/.test(whole[i]) && cleanCut(whole, i)) { punct = i; break; }
   }
-  const cuts = [punct, whole.search(/\s[-–—]\s/), whole.indexOf(' ('), whole.search(JOINERS)].filter(i => i >= min).sort((a, b) => a - b);
+  const cuts = [punct, whole.search(/\s[-\u2013\u2014]\s/), whole.indexOf(' ('), whole.search(JOINERS)].filter(i => i >= min).sort((a, b) => a - b);
   for (const at of cuts) {
     const title = tidy(whole.slice(0, at));
     if (title.length >= min) return { title, notes: whole };

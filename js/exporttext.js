@@ -16,10 +16,13 @@
 // With `links` off, links are just their text.
 
 import * as store from './store.js';
+import { byRank } from './order.js';
 import { KINDS } from './refs.js';
 
+const byPlace = byRank(); // order.js
+
 const LINK = /\[([^\]]*)\]\(sift:([a-z_]+)\/([\w-]+)\)/g;
-const plain = s => s.replace(/\*\*(.+?)\*\*/g, '$1').replace(/~~(.+?)~~/g, '$1').replace(/(^|\s)_(\S.*?)_(?=$|[\s).,!?:;])/g, '$1$2').replace(/^#{1,6}\s+/, '');
+const plain = s => s.replace(/\*\*(.+?)\*\*/g, '$1').replace(/~~(.+?)~~/g, '$1').replace(/(^|\s)_(\S.*?)_(?=$|[\s).,!?:;])/g, '$1$2').replace(/^(?:#{1,6}|-#|\+#|#\+)\s+/, '');
 const showTime = t => { const [h, m] = t.split(':'); return `${Number(h)}.${m}`; };
 const longDate = d => new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -44,7 +47,7 @@ export async function daysAsText(from, to, { links = true } = {}) {
   for (const date of dates) {
     const day = days.find(d => d.date === date);
     const list = items.filter(i => i.date === date)
-      .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99') || (a.sort_order ?? 0) - (b.sort_order ?? 0));
+      .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99') || byPlace(a, b));
     const line = i => [` - ${i.time ? `${showTime(i.time)}${i.end_time ? `–${showTime(i.end_time)}` : ''} ` : ''}${withLinks(i.title)}`, ...noteLines(i.notes, '  ')];
     if (out.length) out.push('');
     out.push(longDate(date));

@@ -3,6 +3,8 @@
 // aim_at (completion aim) while not done.
 
 import * as store from './store.js';
+import { byRank, firstKey } from './order.js';
+import { word } from './words.js';
 
 export const STATUSES = [
   { id: 'todo', label: 'To do' },
@@ -18,7 +20,7 @@ export const PRIORITIES = [
   { id: 4, label: 'Low' },
 ];
 
-const byOrder = (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.created_at.localeCompare(b.created_at);
+const byOrder = byRank(); // order.js: merges cleanly across devices
 export const aimDate = t => (t.aim_at ? t.aim_at.slice(0, 10) : null);
 export const isDone = t => !!t.done_at;
 
@@ -65,16 +67,63 @@ export async function addTask(fields) {
     title: '', notes: '', project_id: null, milestone_id: null, parent_task_id: null,
     status: 'todo', priority: 3, energy: null, start_date: null, aim_at: null, done_at: null,
     calendar_event_id: null, calendar_sync: 'none', recurrence_rule: null,
+    horizon: 'inbox', estimate_min: null,
     source_thought_id: null, source_scan_id: null, source_contract_id: null,
     contact_ids: [], case_id: null, sort_order: count,
     ...fields,
   });
 }
 
+// A new task at the top of the list (where you'll see it), e.g. one made from a
+// Brain Dump note.
+export async function addTaskFirst(fields) {
+  return addTask({ ...fields, rank: firstKey(await store.list('tasks')) });
+}
+
 // Tick / untick: done_at is set when ticked and cleared when unticked.
 export function doneFields(done) {
   return done ? { done_at: new Date().toISOString(), status: 'done' } : { done_at: null, status: 'todo' };
 }
+
+// Plan for day puts the task on that day in the Day Planner, and a task is on
+// one day only: its open copy moves with the date (from whichever day it's
+// on), any other open copies go, and removing the date takes it off. Ticked
+// copies stay where they are, as a record. Returns an undo.
+//   planDay(task, date, { keepDate })   date = 'YYYY-MM-DD' or null;
+//     keepDate: leave the task's Plan for day alone (e.g. dragged to "To place")
+export async function planDay(task, date, { keepDate = false } = {}) {
+  const { addItem } = await import('./days.js');
+  const before = task.start_date || null;
+  const open = (await store.list('day_items', { filter: i => i.task_id === task.id && !i.archived_at && !i.done_at }))
+    .sort((x, y) => Number(y.date === before) - Number(x.date === before)); // the one on its planned day first
+  if (!keepDate) await store.update('tasks', task.id, { start_date: date });
+  let made = null;
+  const moved = [];
+  const removed = [];
+  const onNew = date && open.find(i => i.date === date);
+  const others = open.filter(i => i !== onNew);
+  if (date && !onNew && others.length) {
+    const m = others.shift();
+    moved.push({ ...m });
+    await store.update('day_items', m.id, { date, time: null, end_time: null });
+    made = null;
+  } else if (date && !onNew) {
+    made = await addItem(date, { title: task.title, task_id: task.id, estimate_min: task.estimate_min ?? null, energy: task.energy ?? null, notes: task.notes || '', contact_ids: task.contact_ids || [], case_id: task.case_id || null });
+  }
+  for (const o of others) { removed.push(o); await store.remove('day_items', o.id); }
+  return async () => {
+    if (!keepDate) await store.update('tasks', task.id, { start_date: before });
+    if (made) await store.remove('day_items', made.id);
+    for (const m of moved) await store.update('day_items', m.id, { date: m.date, time: m.time ?? null, end_time: m.end_time ?? null });
+    for (const r of removed) await store.restore('day_items', r.id);
+  };
+}
+
+// Sub-tasks go three levels deep at most: a task, its sub-tasks, and theirs.
+export const MAX_DEPTH = 2; // depth of the deepest sub-task (a task is 0)
+// How deep a task is (0 for a task of its own), and how many levels sit under it.
+export function depthIn(t, all) { let d = 0; for (let p = t?.parent_task_id; p && d < 20; d++) p = all.find(x => x.id === p)?.parent_task_id; return d; }
+export function levelsUnder(t, all) { const kids = all.filter(x => x.parent_task_id === t.id); return kids.length ? 1 + Math.max(...kids.map(k => levelsUnder(k, all))) : 0; }
 
 // What Day Planner shows for a date.
 export function forDay(tasks, date) {
@@ -85,11 +134,8 @@ export function forDay(tasks, date) {
 }
 
 // When a task is for: now (the default), next, or later.
-export const HORIZONS = [
-  { id: 'now', label: 'Now' },
-  { id: 'next', label: 'Next' },
-  { id: 'later', label: 'Later' },
-];
+// The names are yours (Settings → Dictionary).
+export const HORIZONS = ['inbox', 'now', 'next', 'later'].map(id => ({ id, get label() { return word(`list_${id}`); } }));
 export const horizonOf = t => t.horizon || 'now';
 
 // Unplanned, unfinished tasks matching an energy level (for "adopt").

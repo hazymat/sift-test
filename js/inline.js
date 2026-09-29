@@ -2,12 +2,10 @@
 // remembers what was there.
 //   Enter        saves (the field loses focus; the view saves with "Saved · Undo")
 //   click away   saves the same way
-//   Esc          puts the old text back, with an "Escape cancelled change" toast
-//                whose Undo brings your edit back (and saves it)
+//   Esc          saves the same way and leaves the field; the view's own Esc
+//                (closing a panel, say) waits for the next press
 // Fields with their own Enter/Escape handling (e.g. "+ item", a new line on
 // the planner) handle those keys first and are left alone.
-
-import { toast } from './toast.js';
 
 const SKIP = '.new-line, .quick-add, #case-note, input[type="search"], input[type="checkbox"], input[type="radio"], input[type="file"], input[type="date"], input[type="time"], .no-inline';
 const original = new WeakMap();
@@ -38,21 +36,9 @@ export function installInlineEditing() {
     const el = ev.target;
     if (!inline(el) || !original.has(el)) return;
     if (ev.key === 'Escape') {
-      const before = original.get(el);
-      const typed = el.value;
       ev.preventDefault();
       ev.stopImmediatePropagation();
-      if (typed === before) { el.blur(); return; }
-      el.value = before; // setting it in code means no "change" fires on blur
       el.blur();
-      toast('Escape cancelled change', {
-        action: 'Undo',
-        onAction: () => {
-          if (!el.isConnected) return;
-          el.value = typed;
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-        },
-      });
     }
   }, true);
 
@@ -87,14 +73,15 @@ export function installInlineEditing() {
 // Date and time fields fire "change" while you're still typing (e.g. after
 // the first digit of a day), which would save and redraw mid-edit. Hold those
 // back: the change is let through once, when you leave the field or press
-// Enter. Esc puts the old value back (with an Undo toast).
+// Enter. Esc leaves the field and saves, the same.
 const DATEISH = 'input[type="date"], input[type="time"], input[type="datetime-local"], input[type="month"]';
 function installDateFields() {
   const was = new WeakMap();
   let releasing = false;
   const isDate = el => el instanceof HTMLInputElement && el.matches(DATEISH) && !el.matches('.no-inline');
 
-  document.addEventListener('focusin', ev => { if (isDate(ev.target)) was.set(ev.target, ev.target.value); });
+  // (Focus can come again without leaving, e.g. when the picker empties the field: keep the first value.)
+  document.addEventListener('focusin', ev => { if (isDate(ev.target) && !was.has(ev.target)) was.set(ev.target, ev.target.value); });
 
   document.addEventListener('change', ev => {
     if (!releasing && isDate(ev.target) && was.has(ev.target)) ev.stopImmediatePropagation();
@@ -118,22 +105,7 @@ function installDateFields() {
     if (ev.key === 'Escape') {
       ev.preventDefault();
       ev.stopImmediatePropagation();
-      const before = was.get(el);
-      const typed = el.value;
-      was.delete(el);
-      el.value = before;
       el.blur();
-      if (typed !== before) {
-        toast('Escape cancelled change', {
-          action: 'Undo',
-          onAction: () => {
-            if (!el.isConnected) return;
-            el.value = typed;
-            releasing = true;
-            try { el.dispatchEvent(new Event('change', { bubbles: true })); } finally { releasing = false; }
-          },
-        });
-      }
     }
   }, true);
 }

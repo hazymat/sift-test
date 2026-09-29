@@ -2,7 +2,8 @@
 //   press and hold (mouse or touch) on the item's text, or
 //   Alt+Enter while typing in it.
 // A short click still just edits the text in place. Works for every list
-// whose rows carry a details button (Day Planner, Tasks, Find Things, Lists).
+// whose rows carry a details button (Day Planner, Find Things, Lists), but not
+// where a hold drags the row instead ([data-hold-drag]: Tasks; listkit.js).
 
 const TITLE = '.item-title, .task-title, .item-list input[name="name"]';
 const ROW = 'li[data-id], li[data-task], .line.has-item[data-item]';
@@ -28,7 +29,7 @@ export function installHoldToOpen() {
 
   document.addEventListener('pointerdown', ev => {
     const title = ev.target.closest?.(TITLE);
-    if (!title || ev.button > 0) return;
+    if (!title || ev.button > 0 || title.closest('[data-hold-drag]')) return;
     const row = title.closest(ROW);
     cancel();
     hold = {

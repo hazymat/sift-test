@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Sift test</title>
   <meta name="description" content="Tasks, day plans, thoughts, things, contacts, scans and contracts, all in one place.">
   <meta name="theme-color" content="#0f172a">
@@ -10,10 +10,20 @@
   <script>
     // Apply the saved theme before first paint; the setting itself lives in IndexedDB.
     (function () {
-      var t = 'blue';
+      // (Themes: js/app.js THEMES. "blue" is the old name of Glass.)
+      var t = 'glass';
       try { t = siftTestStorage.getItem('sift-theme') || t; } catch (e) {}
-      if (t === 'auto') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'blue';
-      document.documentElement.dataset.theme = t;
+      var look = { glass: 'blue', 'glass-fancy': 'blue', blue: 'blue', dark: 'dark', light: 'light', auto: 'auto' }[t] || 'blue';
+      if (look === 'auto') look = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'blue';
+      var fonts = t === 'glass-fancy' ? 'fancy' : 'plain';
+      // Custom theme: its starting look and the CSS made from the user's picks (js/customtheme.js).
+      if (t === 'custom') try {
+        var c = JSON.parse(siftTestStorage.getItem('sift-custom'));
+        look = c.look; fonts = c.fonts; document.documentElement.dataset.custom = '';
+        var st = document.createElement('style'); st.id = 'custom-theme-css'; st.textContent = c.css; document.head.appendChild(st);
+      } catch (e) {}
+      document.documentElement.dataset.theme = look;
+      document.documentElement.dataset.fonts = fonts;
       // Text size is per device (Settings → Appearance).
       try { var z = siftTestStorage.getItem('sift-text-size'); if (z) document.documentElement.style.fontSize = z + '%'; } catch (e) {}
     })();
@@ -22,8 +32,8 @@
   <meta name="apple-mobile-web-app-title" content="Sift test">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/app-icon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="icons/app-icon-180.png">
   <link rel="stylesheet" href="css/app.css">
   <script type="module" src="js/app.js"></script>
 </head>
@@ -39,15 +49,21 @@
     <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
     <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4M16 3v4M4 10h16"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01" stroke-width="2.4"/></symbol>
     <symbol id="i-cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+    <symbol id="i-view" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle cx="12" cy="7.5" r=".6" fill="currentColor"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
     <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></g></symbol>
-    <symbol id="i-grip" viewBox="0 0 24 24"><path d="M5 8h14M5 12h14M5 16h14"/></symbol>
+    <symbol id="i-grip" viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.7"/><circle cx="15" cy="6" r="1.7"/><circle cx="9" cy="12" r="1.7"/><circle cx="15" cy="12" r="1.7"/><circle cx="9" cy="18" r="1.7"/><circle cx="15" cy="18" r="1.7"/></g></symbol>
     <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></symbol>
     <symbol id="i-recipes" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11M9 8h6"/></symbol>
     <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></symbol>
     <symbol id="i-lists" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></symbol>
     <symbol id="i-note" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h5"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="M20 11l-8.5 8.5a5 5 0 0 1-7-7L13 4a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4L14 7"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-unlink" viewBox="0 0 24 24"><path d="M9 17H7a5 5 0 0 1 0-10h2M15 7h2a5 5 0 0 1 2.9 9.1M8 12h3M4 4l16 16"/></symbol>
   </svg>
 
   <header class="appbar">
@@ -59,6 +75,11 @@
         <div id="topnav-more-menu" class="menu"></div>
       </details>
     </nav>
+    <div class="top-search">
+      <svg class="icon top-search-icon" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="search" id="top-search" name="q" class="search" placeholder="Search everything…" title="Search everything (Ctrl+K)" autocomplete="off" data-1p-ignore data-lpignore="true" aria-label="Search everything">
+      <div id="top-results" class="menu search-results" hidden></div>
+    </div>
     <span id="sync-status" class="pill">Local only</span>
   </header>
 
@@ -71,7 +92,9 @@
   <nav id="tabbar" class="tabbar" aria-label="Areas"></nav>
 
   <dialog id="more-sheet" class="sheet" aria-label="More areas">
-    <div class="sheet-handle"></div>
+    <div class="sheet-handle" tabindex="-1" autofocus></div>
+    <input type="search" id="more-search" name="q" class="search" placeholder="Search everything…" autocomplete="off" data-1p-ignore data-lpignore="true" aria-label="Search everything">
+    <div id="more-results" class="search-results" hidden></div>
     <nav id="more-list" class="sheet-list"></nav>
   </dialog>
 </body>

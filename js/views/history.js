@@ -5,6 +5,7 @@ import * as store from '../store.js';
 import { describe, lines, areasOf, undoEntries } from '../history.js';
 import { createListKit } from '../listkit.js';
 import { toast } from '../toast.js';
+import { word } from '../words.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const icon = id => `<svg class="icon" aria-hidden="true"><use href="#${id}"/></svg>`;
@@ -18,8 +19,8 @@ export default {
     let q = '';
 
     el.innerHTML = `
-      <p class="muted hint">Every change on this device. Undo any of them, in any order; undoing is itself a change you can undo. Tap ≡ to select several, then Undo in the bar.</p>
-      <input type="search" id="h-q" class="search" placeholder="Search history…" autocomplete="off">
+      <p class="muted hint">${esc(word('ph_history'))}</p>
+      <input type="search" id="h-q" class="search" placeholder="${esc(word('ph_history_search'))}" autocomplete="off">
       <div id="h-body"></div>`;
     const body = el.querySelector('#h-body');
 
@@ -35,7 +36,8 @@ export default {
       actions: [{ id: 'undo', label: 'Undo', run: ids => run(entries.filter(e => ids.includes(e.id))) }],
     });
 
-    const render = this.render = async () => {
+    // After a sync the app calls refresh(): redraw from fresh data, keeping what's open.
+    const render = this.render = this.refresh = async () => {
       entries = await store.historyList();
       const undone = new Set(entries.flatMap(e => e.undo_of || []));
       const words = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -77,7 +79,7 @@ export default {
 
     // New changes (made in another tab, or by undoing) show up here.
     this.unsubscribe = store.subscribe(ch => { if (ch.collection === 'history') { clearTimeout(this.rt); this.rt = setTimeout(render, 200); } });
-    this.onKey = ev => { if (ev.key === 'Escape' && !ev.target.closest('input, textarea')) kit.escape(); };
+    this.onKey = ev => { if (ev.key === 'Escape' && !ev.target.closest('input, textarea, select, [contenteditable]')) kit.escape(); };
     addEventListener('keydown', this.onKey);
     await render();
   },

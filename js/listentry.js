@@ -4,14 +4,16 @@
 //   - one item per line; blank lines ignored
 //   - a line starting with a space, "-", "*" or "•" is a sub-item of the line above
 //   - Ctrl+Enter (⌘+Enter on Mac) adds; the button does the same
+//   - with `enterAdds` a plain Enter adds too (Shift+Enter is a new line), like the Tasks and
+//     Day Planner "New task" lines
 
 import { keepDraft, draftCleared } from './drafts.js';
 
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 export const SHORTCUT = MAC ? '⌘↵' : 'Ctrl+Enter';
 
-export function listHint({ subItems = true } = {}) {
-  return `One per line.${subItems ? ' Start a line with - for a sub-item.' : ''} ${SHORTCUT} to add.`;
+export function listHint({ subItems = true, enterAdds = false } = {}) {
+  return `One per line.${subItems ? ' Start a line with - for a sub-item.' : ''} ${enterAdds ? 'Enter adds; Shift+Enter for a new line.' : `${SHORTCUT} to add.`}`;
 }
 
 // Text → [{ text, sub }]
@@ -24,7 +26,7 @@ export function parseLines(text) {
 // Wire a textarea: Ctrl/⌘+Enter calls onSubmit(lines). The textarea is
 // cleared and refocused after a successful submit. With `draft` (a key, or a
 // function giving one) unsaved text is kept until it's added (drafts.js).
-export function listEntry(textarea, onSubmit, { draft } = {}) {
+export function listEntry(textarea, onSubmit, { draft, enterAdds = false } = {}) {
   if (draft) keepDraft(textarea, draft);
   const submit = async () => {
     const text = textarea.value;
@@ -43,7 +45,8 @@ export function listEntry(textarea, onSubmit, { draft } = {}) {
     if (textarea.isConnected) textarea.focus();
   };
   textarea.addEventListener('keydown', ev => {
-    if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+    if (ev.key !== 'Enter' || ev.isComposing) return;
+    if (ev.ctrlKey || ev.metaKey || (enterAdds && !ev.shiftKey)) {
       ev.preventDefault();
       submit();
     }

@@ -5,6 +5,7 @@
 import { binProviders, restoreEntries, returnEntries, purgeEntries, binEntries, BIN_DAYS } from '../bin.js';
 import { undoable } from '../toast.js';
 import { createListKit } from '../listkit.js';
+import { dateText } from '../days.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -17,7 +18,7 @@ function ago(iso) {
   if (hours < 24) return `${hours} h ago`;
   const days = Math.round(hours / 24);
   if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
-  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return dateText(new Date(iso), { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 export default {
@@ -43,7 +44,8 @@ export default {
     const body = el.querySelector('#bin-body');
     const q = el.querySelector('#bin-q');
 
-    const render = this.render = async () => {
+    // After a sync the app calls refresh(): redraw from fresh data, keeping what's open.
+    const render = this.render = this.refresh = async () => {
       q.value = state.q;
       for (const b of el.querySelectorAll('#bin-tabs button')) b.setAttribute('aria-pressed', b.dataset.tab === state.tab);
       const providers = binProviders();

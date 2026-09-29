@@ -2,13 +2,14 @@
 // by `kind`) → items. Plus CSV import/export and search.
 
 import * as store from './store.js';
+import { byRank } from './order.js';
 import { parseCsvObjects, toCsv } from './csv.js';
 
 export const CSV_COLUMNS = ['life_area', 'group', 'box_code', 'box_name', 'box_location', 'box_notes', 'item', 'item_notes', 'sub_of'];
 const DEFAULT_EDITION = 'Standard';
 const DEFAULT_SECTION = 'Boxes';
 
-const byOrder = (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.created_at.localeCompare(b.created_at);
+const byOrder = byRank(); // order.js: merges cleanly across devices
 const same = (a, b) => (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
 
 // Everything in one pass, nested and sorted.

@@ -2,6 +2,7 @@
 // the date so every device edits the same record) and `day_items`.
 
 import * as store from './store.js';
+import { byRank } from './order.js';
 
 export const DAY_DEFAULTS = {
   day_start: '08:00',
@@ -9,12 +10,14 @@ export const DAY_DEFAULTS = {
   slot_min: 60,
   down_days: [0], // 0 = Sunday … 6 = Saturday
   hint_down_day: true,
+  hint_over_plan: true, // a note when the day's plan is longer than the day
   hint_walk_breaks: true,
   paper_style: 'glass',
   duration_max_min: 240, // longest choice in the Duration list
   show_now_marker: true, // ▶ in the margin at the current time (today only)
   show_evening: true, // a section after the day's last line
   evening_label: 'Evening plans',
+  recurring_on_planner: true, // a recurring task's next one goes on the Day Planner on its date (repeat.js)
 };
 
 // Page styles for the planner (default in Settings, overridable per day).
@@ -42,11 +45,25 @@ export function durationLabel(m) {
 }
 
 // Energy is shown as lightning: ⚡ low, ⚡⚡ medium, ⚡⚡⚡ high (low first).
+// What each level means is yours to set (Settings → Your words → Dictionary); these are the suggestions.
+export const ENERGY_DEFAULTS = {
+  low: 'Desk work, small tasks, admin',
+  medium: 'Meetings, some project work',
+  high: 'Physically active work, starting new projects',
+};
 export const ENERGY = [
-  { id: 'low', label: 'Low', bolts: '⚡', hint: 'Laptop work: coding, accounts, design' },
-  { id: 'medium', label: 'Medium', bolts: '⚡⚡', hint: 'Pottering jobs' },
-  { id: 'high', label: 'High', bolts: '⚡⚡⚡', hint: 'Big tidy-ups, starting big projects' },
+  { id: 'low', label: 'Low', bolts: '⚡', hint: ENERGY_DEFAULTS.low },
+  { id: 'medium', label: 'Medium', bolts: '⚡⚡', hint: ENERGY_DEFAULTS.medium },
+  { id: 'high', label: 'High', bolts: '⚡⚡⚡', hint: ENERGY_DEFAULTS.high },
 ];
+
+// Put the saved meanings into ENERGY (the hover text everywhere is read from it).
+// Called at start-up and whenever the settings change.
+export async function applyEnergyMeanings() {
+  const s = await store.getSettings();
+  for (const e of ENERGY) e.hint = String(s[`energy_${e.id}`] || '').trim() || ENERGY_DEFAULTS[e.id];
+  return ENERGY;
+}
 
 export async function daySettings() {
   const s = await store.getSettings();
@@ -54,6 +71,10 @@ export async function daySettings() {
 }
 
 // ---------- dates and times (local, not UTC) ----------
+
+// Dates in words, the same everywhere: British order and "Sep" (some browsers write "Sept").
+export const dateText = (d, opts) => d.toLocaleDateString('en-GB', opts).replace(/\bSept\b/, 'Sep');
+export const dateTimeText = (d, opts) => d.toLocaleString('en-GB', opts).replace(/\bSept\b/, 'Sep');
 
 export function isoDate(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -102,7 +123,8 @@ export function saveDay(date, fields) {
   return next;
 }
 
-const byTime = (a, b) => (a.time || '99:99').localeCompare(b.time || '99:99') || (a.sort_order ?? 0) - (b.sort_order ?? 0);
+const byPlace = byRank();
+const byTime = (a, b) => (a.time || '99:99').localeCompare(b.time || '99:99') || byPlace(a, b);
 
 export async function itemsFor(date) {
   return (await store.list('day_items', { filter: i => i.date === date && !i.archived_at })).sort(byTime);
@@ -111,7 +133,7 @@ export async function itemsFor(date) {
 export async function addItem(date, fields) {
   const count = (await itemsFor(date)).length;
   return store.create('day_items', {
-    date, title: '', notes: '', time: null, end_time: null, estimate_min: null, estimate_unsure: false, done_at: null, dropped_at: null,
+    date, title: '', notes: '', time: null, end_time: null, energy: null, estimate_min: null, estimate_unsure: false, done_at: null, dropped_at: null,
     sort_order: count, task_id: null, case_id: null, contact_ids: [], source_thought_id: null, carried_from: null,
     ...fields,
   });
@@ -129,7 +151,7 @@ export async function unfinishedBefore(date, days = 7) {
 export async function datesWithContent(from, to) {
   const out = new Set();
   for (const i of await store.list('day_items', { filter: i => i.date >= from && i.date <= to })) out.add(i.date);
-  for (const d of await store.list('days', { filter: d => d.date >= from && d.date <= to && (d.focus || d.notes || d.energy) })) out.add(d.date);
+  for (const d of await store.list('days', { filter: d => d.date >= from && d.date <= to && (d.focus || d.notes || d.energy || d.energy_note) })) out.add(d.date);
   return out;
 }
 
@@ -138,7 +160,7 @@ export async function datesWithContent(from, to) {
 // like any archived item; the "Let go, not done" filter finds just those.
 // Restoring one recalls it: back on its day, unfinished, not "let go".
 
-const niceDay = d => parseDate(d).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+const niceDay = d => dateText(parseDate(d), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 
 export const binProvider = {
   area: 'planner',

@@ -5,6 +5,7 @@
 //   #/contacts/c/<id>          One contact (opening it stamps "looked up")
 
 import { cogHtml } from '../viewcog.js';
+import { shareHtml } from '../share.js';
 import * as store from '../store.js';
 import {
   loadContacts, createContact, contactFromText, extractDetails, logInteraction, lastActivity,
@@ -13,11 +14,16 @@ import {
 import { listEntry, listHint, SHORTCUT } from '../listentry.js';
 import { toast, undoable } from '../toast.js';
 import { richText } from '../richtext.js';
+import { debounced } from '../autosave.js';
 import { mentionsOf } from '../refs.js';
 import { keepDraft, draftCleared } from '../drafts.js';
 import { addTask } from '../tasks.js';
-import { isoDate } from '../days.js';
+import { isoDate, dateText, dateTimeText } from '../days.js';
 import { createListKit } from '../listkit.js';
+import { askText } from '../ask.js';
+import { word } from '../words.js';
+import { tintHex, tintId, colourMenu } from '../colours.js';
+import { keys } from '../keys.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const icon = id => `<svg class="icon" aria-hidden="true"><use href="#${id}"/></svg>`;
@@ -32,9 +38,9 @@ function ago(iso) {
   if (h < 24) return `${h} h ago`;
   const d = Math.round(h / 24);
   if (d < 14) return `${d} day${d === 1 ? '' : 's'} ago`;
-  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return dateText(new Date(iso), { day: 'numeric', month: 'short', year: 'numeric' });
 }
-const when = iso => new Date(iso).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const when = iso => dateTimeText(new Date(iso), { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 export default {
   async mount(el) {
@@ -49,16 +55,17 @@ export default {
           <button type="button" data-tab="directory">Directory</button>
           <button type="button" data-tab="cases">Cases</button>
         </div>
-        ${cogHtml('contacts')}
-        <details class="tool-menu">
+        ${shareHtml()}
+          ${cogHtml('contacts')}
+        <details class="tool-menu page-more">
           <summary class="icon-btn" aria-label="More actions">${icon('i-more')}</summary>
           <div class="menu">
             <button type="button" data-act="new-contact">New contact</button>
             <button type="button" data-act="new-category">New category</button>
             <button type="button" data-act="new-case">New case</button>
             <hr>
-            <a href="#/bin/archive/contacts">Archive</a>
-            <a href="#/bin/bin/contacts">Bin</a>
+            <a href="#/bin/archive/contacts">Show Archive</a>
+            <a href="#/bin/bin/contacts">Show Bin</a>
           </div>
         </details>
       </div>
@@ -68,7 +75,7 @@ export default {
 
     const byId = id => data.contacts.find(c => c.id === id);
     // First real line of the notes, for cards (not the "Captured" heading).
-    const noteLine = c => (c.notes || '').split('\n').map(l => l.replace(/[*_~#]/g, '').trim()).find(l => l && !CAPTURED_HEADING.includes(l))?.slice(0, 90) || '';
+    const noteLine = c => (c.notes || '').split('\n').map(l => l.replace(/[*_~#]/g, '').trim()).find(l => l && !CAPTURED_HEADING.includes(l) && !(c.body || '').includes(l))?.slice(0, 90) || ''; // not the captured text again
     const catName = id => data.categories.find(k => k.id === id)?.name || '';
 
     // ---------- shared bits ----------
@@ -82,13 +89,19 @@ export default {
       }).join('');
     }
 
+    // A contact can be just a bit of text with a number ("man about the van
+    // 07…"): the text is its name. "What was this?" only asks when there is no
+    // text at all, just a number.
+    const label = c => c.name?.trim() || (c.body || '').split('\n').map(l => l.trim()).find(Boolean) || '(no name)';
+    const needsLabel = c => c.status === 'transient' && !c.about && !/\p{L}/u.test(c.name || '');
+
     function contactCard(c) {
       return `
-        <li class="c-card${c.pinned ? ' pinned' : ''}" data-contact-card="${c.id}" data-id="${c.id}">
+        <li class="c-card${c.pinned ? ' pinned' : ''}" data-contact-card="${c.id}" data-id="${c.id}" style="--tint: ${tintHex(c)}">
           <button type="button" class="drag-handle kit-grip" aria-label="Select">${icon('i-grip')}</button>
           <a class="c-main" href="#/contacts/c/${c.id}">
-            <span class="c-name">${esc(c.name || '(no name)')}</span>
-            ${c.about ? `<span class="muted c-about">${esc(c.about)}</span>` : c.status === 'transient' ? '<span class="what-was-this">What was this?</span>' : ''}
+            <span class="c-name">${esc(label(c))}</span>
+            ${c.about ? `<span class="muted c-about">${esc(c.about)}</span>` : needsLabel(c) ? '<span class="what-was-this">What was this?</span>' : ''}
             ${c.category_ids?.length ? `<span class="muted c-about">${c.category_ids.map(catName).filter(Boolean).map(esc).join(' · ')}</span>` : ''}
             ${noteLine(c) ? `<span class="muted c-about c-note">${esc(noteLine(c))}</span>` : ''}
           </a>
@@ -108,10 +121,10 @@ export default {
       const older = sorted.filter(c => !recent.includes(c));
       return `
         <div class="c-capture">
-          <textarea id="c-new" rows="2" placeholder="Paste or type a number, email, name… (one contact)"></textarea>
-          <button type="button" class="primary" data-act="capture">Save <kbd>${SHORTCUT}</kbd></button>
+          <textarea id="c-new" rows="2" placeholder="${esc(word('ph_contact_capture'))}"></textarea>
+          <button type="button" class="primary" data-act="capture">Save ${keys(SHORTCUT)}</button>
         </div>
-        <input type="search" id="c-q" class="search" placeholder="Search contacts…" value="${esc(state.q)}" autocomplete="off">
+        <input type="search" id="c-q" class="search" placeholder="${esc(word('ph_contact_search'))}" value="${esc(state.q)}" autocomplete="off">
         <ul class="c-list kit-list">${recent.map(contactCard).join('') || (older.length ? '' : '<li class="empty"><h2>No contacts yet. Paste a number above.</h2></li>')}
           ${older.length ? `<li class="list-head older-head">Older <span class="muted">(untouched for ${OLDER_DAYS} days)</span></li>${older.map(contactCard).join('')}` : ''}
         </ul>`;
@@ -134,14 +147,14 @@ export default {
           <details class="research" ${inCat.length ? '' : 'open'}>
             <summary>Research mode: add lots at once</summary>
             <p class="muted hint">One per line: name, number, website, a note, in any order. Numbers, emails and links are recognised. Each becomes a candidate in ${esc(cat.name)}. ${SHORTCUT} to add.</p>
-            <textarea id="research-new" rows="4" placeholder="Smith Plumbing 0161 555 0101 smithplumbing.co.uk good reviews&#10;Dave (Anna's plumber) 07700 900123 not sure he'll do it, but maybe"></textarea>
+            <textarea id="research-new" rows="4" placeholder="Smith Plumbing 0161 555 0101 smithplumbing.co.uk good reviews&#10;Joe (a neighbour's plumber) 07700 900123 maybe"></textarea>
           </details>
           <ul class="c-list research-list kit-list">${inCat.map(c => `
             ${contactCard(c)}
             <li class="research-row" data-research="${c.id}">
               ${RESEARCH.map(r => `<button type="button" data-status="${r.id}" aria-pressed="${c.research_status === r.id}">${r.label}</button>`).join('')}
               <span class="stars">${[1, 2, 3, 4, 5].map(n => `<button type="button" data-rate="${n}" aria-pressed="${(c.rating || 0) >= n}">★</button>`).join('')}</span>
-            </li>`).join('') || '<li class="muted hint">Nobody here yet.</li>'}
+            </li>`).join('') || '<li class="muted hint">' + esc(word('ph_contact_none')) + '</li>'}
           </ul>`;
       }
       const uncategorised = stored.filter(c => !c.category_ids?.length);
@@ -153,7 +166,7 @@ export default {
           }).join('')}
           <button type="button" class="project-card add-card" data-act="new-category">+ New category</button>
         </div>
-        <p class="muted hint">Categories are anything you like: Plumber, Sparky, Carers, Mum Care…</p>
+        <p class="muted hint">${esc(word('ph_categories'))}</p>
         ${uncategorised.length ? `<h3 class="milestone">Stored, no category</h3><ul class="c-list">${uncategorised.map(contactCard).join('')}</ul>` : ''}`;
     }
 
@@ -166,12 +179,15 @@ export default {
       };
     }
 
-    function logForm(prefix) {
+    // openTasks: the contact's open tasks; when there are any, the log can also
+    // go on one of them as a comment (js/comments.js).
+    function logForm(prefix, openTasks = []) {
       return `
         <div class="log-form" data-log-form="${prefix}">
           <select name="how">${HOW.map(h => `<option value="${h.id}">${h.icon} ${h.label}</option>`).join('')}</select>
           <select name="direction"><option value="out">I contacted them</option><option value="in">They contacted me</option></select>
-          <input name="summary" placeholder="What happened? (optional)" autocomplete="off">
+          <input name="summary" placeholder="${esc(word('ph_log_what'))}" autocomplete="off">
+          ${openTasks.length ? `<select name="task_id" aria-label="Also a comment on a task"><option value="">Not about a task</option>${openTasks.map(t => `<option value="${t.id}">💬 ${esc(t.title)}</option>`).join('')}</select>` : ''}
           <button type="button" data-act="log-${prefix}">Log it</button>
         </div>`;
     }
@@ -184,6 +200,7 @@ export default {
       const dayItems = await store.list('day_items', { filter: i => i.contact_ids?.includes(c.id) && !i.archived_at });
       const known = new Set([...tasks, ...dayItems].map(r => r.id));
       const mentions = (await mentionsOf('contacts', c.id)).filter(m => !known.has(m.id) && m.id !== c.id);
+      const scans = await store.list('scans', { filter: s => s.linked?.collection === 'contacts' && s.linked.id === c.id && !s.archived_at });
       const timeline = [
         { at: c.captured_at, text: 'Recorded', kind: 'captured' },
         ...log.map(i => ({ at: i.at, text: `${HOW.find(h => h.id === i.how)?.icon || ''} ${i.direction === 'in' ? 'They' : 'I'} ${i.how === 'call' ? 'called' : i.how === 'email' ? 'emailed' : i.how === 'text' ? 'texted' : i.how}${i.detail_used ? ` (${i.detail_used})` : ''}${i.summary ? `: ${i.summary}` : ''}`, kind: 'log', id: i.id })),
@@ -192,12 +209,12 @@ export default {
       return `
         <div class="project-head">
           <button type="button" class="back" data-act="back">‹ Back</button>
-          <input class="project-name" name="name" value="${esc(c.name)}" placeholder="Who is this?" data-edit="${c.id}" aria-label="Name">
+          <input class="project-name" name="name" value="${esc(c.name)}" placeholder="${esc(word('ph_contact_name'))}" data-edit="${c.id}" aria-label="Name">
           <button type="button" class="pin" data-act="pin-contact" aria-pressed="${!!c.pinned}" title="Pin">${c.pinned ? '★' : '☆'}</button>
         </div>
         <div class="c-page" data-contact="${c.id}">
           <div class="detail-grid">
-            <label class="wide">What was this? / who are they<input name="about" value="${esc(c.about)}" data-edit="${c.id}" placeholder="e.g. The plumber Anna recommended" autocomplete="off"></label>
+            <label class="wide">What was this? / who are they<input name="about" value="${esc(c.about)}" data-edit="${c.id}" placeholder="${esc(word('ph_contact_about'))}" autocomplete="off"></label>
             <label>Kind<select name="kind" data-edit="${c.id}"><option value="person" ${c.kind === 'person' ? 'selected' : ''}>Person</option><option value="organisation" ${c.kind === 'organisation' ? 'selected' : ''}>Organisation</option></select></label>
             <div class="energy-pick"><span>Keep as</span>
               <button type="button" data-act="status" data-value="transient" aria-pressed="${c.status !== 'stored'}">Transient</button>
@@ -221,17 +238,19 @@ export default {
           <h3 class="milestone">Notes</h3>
           <div id="c-notes"></div>
           <h3 class="milestone">Log</h3>
-          ${logForm('contact')}
+          ${logForm('contact', tasks.filter(t => !t.done_at))}
           <ul class="timeline">${timeline.map(e => `<li class="${e.kind}"><span class="muted">${when(e.at)}</span> ${esc(e.text)}</li>`).join('')}</ul>
-          ${cases.length || tasks.length || dayItems.length || mentions.length ? `<h3 class="milestone">Connected</h3><ul class="links">
+          ${cases.length || tasks.length || dayItems.length || mentions.length || scans.length ? `<h3 class="milestone">Connected</h3><ul class="links">
             ${cases.map(k => `<li><a href="#/contacts/cases/${k.id}">Case: ${esc(k.title)}</a></li>`).join('')}
             ${tasks.map(t => `<li><a href="#/tasks/list${t.project_id ? `/${t.project_id}` : ''}">Task: ${esc(t.title)}</a></li>`).join('')}
             ${dayItems.map(i => `<li><a href="#/planner/${i.date}">Plan ${i.date}: ${esc(i.title)}</a></li>`).join('')}
             ${mentions.map(m => `<li><a href="${m.route}">${m.icon} Mentioned in ${esc(m.label.toLowerCase())}: ${esc(m.title)}</a></li>`).join('')}
+            ${scans.map(s => `<li><a href="#/scans/${s.id}">🧾 Scan: ${esc(s.title)}</a></li>`).join('')}
           </ul>` : ''}
           <div class="detail-actions">
             <button type="button" data-act="contact-task">+ Task with this contact</button>
             <span class="spacer"></span>
+            <button type="button" class="thing-colour" data-act="colour-contact"><span class="swatch" style="--sw:${tintHex(c)}"></span> Colour</button>
             <button type="button" data-act="archive-contact">Archive</button>
             <button type="button" class="danger" data-act="delete-contact">Delete</button>
           </div>
@@ -251,7 +270,7 @@ export default {
           </a><span class="muted c-when">${ago(k.updated_at)}</span></li>`).join('') || '<li class="empty"><h2>No cases.</h2></li>'}
         </ul>
         <button type="button" data-act="new-case">+ New case</button>
-        <p class="muted hint">A case is an ongoing saga (e.g. care funding with the council): references, people, calls, letters, tasks and notes in one timeline.</p>`;
+        <p class="muted hint">${esc(word('ph_cases'))}</p>`;
     }
 
     async function viewCase() {
@@ -261,11 +280,15 @@ export default {
       const notes = await store.list('case_notes', { filter: n => n.case_id === k.id });
       const tasks = await store.list('tasks', { filter: t => t.case_id === k.id && !t.archived_at });
       const scans = await store.list('scans', { filter: s => s.linked?.collection === 'cases' && s.linked.id === k.id });
+      // Comments on the case's tasks (js/comments.js), each under its task's name.
+      const taskIds = new Map(tasks.map(t => [t.id, t]));
+      const comments = await store.list('comments', { filter: c => taskIds.has(c.task_id) });
       const events = [
         ...log.map(i => ({ at: i.at, type: 'log', html: `${HOW.find(h => h.id === i.how)?.icon || ''} <b>${i.direction === 'in' ? 'In' : 'Out'}</b>${i.contact_id ? ` · ${esc(byId(i.contact_id)?.name || '')}` : ''}${i.detail_used ? ` · ${esc(i.detail_used)}` : ''}${i.summary ? `: ${esc(i.summary)}` : ''}` })),
         ...notes.map(n => ({ at: n.at, type: 'note', html: `✎ ${esc(n.body)}` })),
         ...tasks.map(t => ({ at: t.created_at, type: 'task', html: `☐ Task: <a href="#/tasks/list">${esc(t.title)}</a>${t.done_at ? ' (done)' : ''}` })),
-        ...scans.map(sc => ({ at: sc.letter_date || sc.created_at, type: 'letter', html: `📄 ${esc(sc.title)}${sc.summary ? `: ${esc(sc.summary)}` : ''}` })),
+        ...comments.map(c => ({ at: c.at, type: 'comment', html: `💬 <a href="#/tasks/list">${esc(taskIds.get(c.task_id).title)}</a>: ${esc(c.body || "📎")}` })),
+        ...scans.map(sc => ({ at: sc.letter_date || sc.created_at, type: 'letter', html: `📄 <a href="#/scans/${sc.id}">${esc(sc.title)}</a>${sc.summary ? `: ${esc(sc.summary)}` : ''}` })),
       ].sort((a, b) => b.at.localeCompare(a.at));
       return `
         <div class="project-head">
@@ -274,7 +297,7 @@ export default {
         </div>
         <div class="c-page" data-case-page="${k.id}">
           <div class="energy-pick"><span>Status</span>${CASE_STATUS.map(s => `<button type="button" data-act="case-status" data-value="${s.id}" aria-pressed="${k.status === s.id}">${s.label}</button>`).join('')}</div>
-          <label class="wide">Summary<input name="summary" value="${esc(k.summary)}" data-case="${k.id}" placeholder="What is this about?" autocomplete="off"></label>
+          <label class="wide">Summary<input name="summary" value="${esc(k.summary)}" data-case="${k.id}" placeholder="${esc(word('ph_case_summary'))}" autocomplete="off"></label>
           <h3 class="milestone">References</h3>
           <ul class="detail-rows">${(k.references || []).map((r, n) => `
             <li data-ref="${n}"><input name="label" value="${esc(r.label)}" class="d-label" aria-label="Label"><input name="value" value="${esc(r.value)}" aria-label="Value">
@@ -288,10 +311,10 @@ export default {
           </div>
           <h3 class="milestone">Timeline</h3>
           ${logForm('case')}
-          <div class="case-note"><input id="case-note" placeholder="Add a note (e.g. letter received: they want bank statements)" autocomplete="off"><button type="button" data-act="case-note">Add note</button>
+          <div class="case-note"><input id="case-note" placeholder="${esc(word('ph_case_note'))}" autocomplete="off"><button type="button" data-act="case-note">Add note</button>
             <button type="button" data-act="case-task">+ Task</button></div>
           <ul class="timeline">${events.map(e => `<li class="${e.type}"><span class="muted">${when(e.at)}</span> ${e.html}</li>`).join('') || '<li class="muted">Nothing yet.</li>'}</ul>
-          <p class="muted hint">Letters: scans linked to this case will show here once Scans is built.</p>
+          <p class="muted hint">${esc(word('ph_case_letters'))}</p>
           <div class="detail-actions"><span class="spacer"></span>
             <button type="button" data-act="archive-case">Archive</button>
             <button type="button" class="danger" data-act="delete-case">Delete</button>
@@ -301,7 +324,8 @@ export default {
 
     // ---------- render ----------
 
-    const render = this.render = async () => {
+    // After a sync the app calls refresh(): redraw from fresh data, keeping what's open.
+    const render = this.render = this.refresh = async () => {
       data = await loadContacts();
       for (const b of el.querySelectorAll('[data-tab]')) b.setAttribute('aria-pressed', b.dataset.tab === (state.tab === 'contact' ? '' : state.tab));
       body.innerHTML = state.tab === 'directory' ? viewDirectory()
@@ -319,8 +343,10 @@ export default {
       const notesBox = body.querySelector('#c-notes');
       if (notesBox) {
         const c = byId(state.id);
-        let t;
-        richText(notesBox, { value: c.notes || '', placeholder: 'Record contact notes here', spot: false, origin: () => ({ collection: 'contacts', id: c.id, title: c.name, field: 'notes' }), onChange: md => { clearTimeout(t); t = setTimeout(() => store.update('contacts', c.id, { notes: md }), 600); } });
+        let pend = null;
+        const auto = debounced(async () => { const md = pend; pend = null; if (md !== null) await store.update('contacts', c.id, { notes: md }); }, 600);
+        richText(notesBox, { value: c.notes || '', placeholder: word('ph_contact_notes'), spot: false, origin: () => ({ collection: 'contacts', id: c.id, title: c.name, field: 'notes' }), onChange: md => { pend = md; auto.trigger(); } });
+        notesBox.addEventListener('focusout', ev => { if (!notesBox.contains(ev.relatedTarget)) auto.flush(); });
       }
     };
 
@@ -336,6 +362,7 @@ export default {
       reorder: false,
       noun: 'contact',
       actions: [
+        { id: 'colour', label: 'Colour…', run: ids => { colourMenu(document.querySelector('[data-kit-action="colour"]'), null, v => batch(ids, { colour: v }, 'Colour of')); } },
         { id: 'store', label: 'Store', run: ids => batch(ids, { status: 'stored' }, 'Stored') },
         { id: 'pin', label: 'Pin', run: ids => batch(ids, { pinned: true }, 'Pinned') },
         { id: 'archive', label: 'Archive', run: ids => batch(ids, { archived_at: new Date().toISOString() }, 'Archived') },
@@ -343,7 +370,7 @@ export default {
       ],
     });
     this.onKey = ev => {
-      if (ev.key === 'Escape' && !ev.target.closest('input, textarea, select, [contenteditable]')) kit.escape();
+      if (ev.key === 'Escape' && !ev.target.closest('input, textarea, select, [contenteditable]') && kit.escape()) ev.preventDefault();
     };
     addEventListener('keydown', this.onKey);
 
@@ -373,13 +400,13 @@ export default {
     }
 
     async function newCategory() {
-      const name = prompt('Category name (e.g. Plumber, Carers, Mum Care):');
+      const name = await askText('New category', { placeholder: word('ph_new_category'), ok: 'Add' });
       if (!name?.trim()) return null;
       return store.create('contact_categories', { name: name.trim(), colour: null, sort_order: data.categories.length });
     }
 
     async function newCase() {
-      const title = prompt('Case title (e.g. Mum\'s care funding: council):');
+      const title = await askText('New case', { placeholder: word('ph_new_case'), ok: 'Add' });
       if (!title?.trim()) return;
       const k = await store.create('cases', { title: title.trim(), status: 'open', summary: '', references: [], contact_ids: [], project_id: null, opened_at: new Date().toISOString(), closed_at: null });
       go(`#/contacts/cases/${k.id}`);
@@ -444,15 +471,28 @@ export default {
         if (act === 'del-detail') { const n = Number(b.closest('[data-n]').dataset.n); return updateContact(c.id, { details: c.details.filter((_, i) => i !== n) }, 'Removed'); }
         if (act === 'log-contact') {
           const f = b.closest('.log-form');
-          const made = await logInteraction({ contact_id: c.id, how: f.querySelector('[name="how"]').value, direction: f.querySelector('[name="direction"]').value, summary: f.querySelector('[name="summary"]').value.trim() });
+          const taskId = f.querySelector('[name="task_id"]')?.value || null;
+          const made = await logInteraction({ contact_id: c.id, how: f.querySelector('[name="how"]').value, direction: f.querySelector('[name="direction"]').value, summary: f.querySelector('[name="summary"]').value.trim(), task_id: taskId });
+          // On a task too: a comment in words ("I called Sam: left a message").
+          const how = made.how === 'call' ? 'called' : made.how === 'email' ? 'emailed' : made.how === 'text' ? 'texted' : made.how;
+          const said = taskId && await store.create('comments', { task_id: taskId, at: made.at, body: `${HOW.find(h => h.id === made.how)?.icon || ''} ${made.direction === 'in' ? `${c.name || 'They'} ${how} me` : `I ${how} ${c.name || 'them'}`}${made.summary ? `: ${made.summary}` : ''}`.trim(), from_interaction_id: made.id });
           await render();
-          undoable('Logged', async () => { await store.remove('interactions', made.id); render(); });
+          undoable(said ? 'Logged, and on the task' : 'Logged', async () => { await store.remove('interactions', made.id); if (said) await store.remove('comments', said.id); render(); });
           return;
         }
         if (act === 'contact-task') {
           const t = await addTask({ title: `Contact ${c.name || 'them'}`, contact_ids: [c.id] });
           toast('Task added', { action: 'Open', onAction: () => go('#/tasks/list') });
           return void t;
+        }
+        if (act === 'colour-contact') {
+          const old = c.colour ?? null;
+          colourMenu(b, tintId(c), async v => {
+            await store.update('contacts', c.id, { colour: v });
+            await render();
+            undoable('Contact colour', async () => { await store.update('contacts', c.id, { colour: old }); await render(); });
+          });
+          return;
         }
         if (act === 'archive-contact' || act === 'delete-contact') {
           const field = act === 'delete-contact' ? 'deleted_at' : 'archived_at';
@@ -492,7 +532,7 @@ export default {
           return;
         }
         if (act === 'case-task') {
-          const title = prompt('Task:');
+          const title = await askText('New task', { placeholder: word('ph_new_task'), ok: 'Add' });
           if (!title?.trim()) return;
           const t = await addTask({ title: title.trim(), case_id: k.id, contact_ids: k.contact_ids || [] });
           await render();
@@ -526,6 +566,8 @@ export default {
       if (t.dataset.case && t.name) {
         const k = data.cases.find(x => x.id === t.dataset.case);
         const old = k?.[t.name] ?? '';
+        // A case's title removed: put it back (deleting a case stays a deliberate act).
+        if (t.name === 'title' && !t.value.trim() && old) { t.value = old; toast('A case needs a title, so it was put back'); return; }
         if (t.value.trim() === old) return;
         await store.update('cases', k.id, { [t.name]: t.value.trim() });
         data = await loadContacts();
