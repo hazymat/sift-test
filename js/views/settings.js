@@ -90,12 +90,6 @@ export default {
         <p class="muted">Every note keeps its earlier versions for this long: Ctrl+Z steps back through them once this visit's changes run out, and 🕘 in a note's full toolbar (Aa) lists them.</p>
       </section>
 
-      <section class="card" id="batch-settings">
-        <h2>Batch Book</h2>
-        <p class="muted">Example recipes with photos, to try Batch Book out. Any you already have are left as they are; ones you deleted come back.</p>
-        <button type="button" data-act="batch-examples">Add example recipes</button>
-      </section>
-
       <section class="card" id="backup-card">
         <h2>Backup</h2>
         <p class="muted" id="backup-status">Until sync is set up, this device holds the only copy of your data.</p>
@@ -644,7 +638,6 @@ export default {
     // Check for updates: get the newest version now instead of waiting.
     // The tour starts from the welcome page (its three choices); reset makes it start from the beginning next time.
     el.querySelector('[data-act="tour"]').addEventListener('click', () => { location.hash = '#/welcome'; });
-    el.querySelector('[data-act="batch-examples"]').addEventListener('click', async ev => { ev.target.disabled = true; await (await import('../examples.js')).addExamples(); ev.target.disabled = false; toast('Added the example recipes to Batch Book'); });
     // The sign-in and password boxes are forms (so a browser's password manager fills those, not the search box); they're never sent.
     el.addEventListener('submit', ev => ev.preventDefault());
     el.querySelector('[data-act="tour-reset"]').addEventListener('click', async () => { await (await import('../tour.js')).resetTour(); toast('The tour will start from the beginning'); });

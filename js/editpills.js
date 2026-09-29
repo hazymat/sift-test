@@ -76,8 +76,6 @@ export function editPills(root, spec) {
     box.dataset.key = editing;
     const done = spec.done && row.querySelector('.tick') ? `<button type="button" class="entry-chip pill-done" data-pill-done>${row.classList.contains('done') ? '↺ Not done' : '✓ Done'}${keys(CTRL_ENTER)}</button>` : '';
     box.innerHTML = `${spec.html(editing)}<button type="button" class="entry-chip pill-more" data-pill-more>More…</button>${done}`;
-    // The pills in one row of their own, under the note line (not behind a More pill: that stays inline).
-    if (!box.querySelector(':scope > .pill-reveal')) { const pillRow = document.createElement('div'); pillRow.className = 'pill-row'; pillRow.append(...box.querySelectorAll(':scope > .entry-chip')); box.append(pillRow); }
     fillDates(box);
     // After the note line if there is one, so the pills sit right under the text.
     const sub = host.querySelector(':scope > .item-sub');

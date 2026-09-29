@@ -6,23 +6,9 @@
 //   caretTo(el, 'start' | 'end')
 
 export function atEdge(el, dir) {
-  if (el.matches('input')) return true;
-  if (el.matches('textarea')) {
+  if (el.matches('input, textarea')) {
     const v = el.value;
-    if (dir === 'up' ? v.slice(0, el.selectionStart).includes('\n') : v.slice(el.selectionEnd).includes('\n')) return false;
-    // A long line wraps: the cursor is on the first / last line only if it's drawn there (a copy of the text measures it).
-    const cs = getComputedStyle(el);
-    const copy = document.createElement('div');
-    for (const k of ['boxSizing', 'width', 'paddingLeft', 'paddingRight', 'borderLeftWidth', 'borderRightWidth', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'wordSpacing', 'textIndent', 'tabSize']) copy.style[k] = cs[k];
-    Object.assign(copy.style, { position: 'absolute', visibility: 'hidden', top: '0', left: '-9999px', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', paddingTop: '0', paddingBottom: '0', height: 'auto' });
-    const mark = document.createElement('span');
-    mark.textContent = '\u200b';
-    copy.append(v.slice(0, dir === 'up' ? el.selectionStart : el.selectionEnd), mark, v.slice(dir === 'up' ? el.selectionStart : el.selectionEnd) || '\u200b');
-    document.body.append(copy);
-    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4 || 20;
-    const at = mark.offsetTop, all = copy.offsetHeight;
-    copy.remove();
-    return dir === 'up' ? at < lh * 0.8 : all - at - lh < lh * 0.8;
+    return dir === 'up' ? !v.slice(0, el.selectionStart).includes('\n') : !v.slice(el.selectionEnd).includes('\n');
   }
   // A note being written (rich text): compare where the cursor is drawn with
   // the note's first and last lines.

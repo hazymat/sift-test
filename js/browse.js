@@ -33,6 +33,7 @@
 // the page, where the keys above work again (in every area).
 
 import { caretTo } from './walk.js';
+import { layoutOn } from './viewcog.js';
 
 const $ = s => document.querySelector(s);
 const vis = el => !!el && el.getClientRects().length > 0;
@@ -71,8 +72,8 @@ const AREAS = {
     },
   },
   tasks: {
-    // The New task line is at the top: ↓ starts typing there too.
-    down: () => focusEnd($('#task-new')),
+    // New task line at the top (👁 Layout; always, without the lined paper): ↓ starts typing there too.
+    down: () => (layoutOn('tasks', 'new-top') || !layoutOn('tasks', 'lined') ? focusEnd($('#task-new')) : focusEnd(all('#main li[data-task][data-id] > .task-title')[0]) || focusEnd($('#task-new'))),
     enter: () => focusEnd($('#task-new')),
   },
   planner: {
@@ -97,7 +98,7 @@ const AREAS = {
     open: el => click(el.querySelector('a.c-main')),
   },
   scans: { search: '.scan-search', items: '#main .scan-card', open: el => click(el) },
-  recipes: { search: '.bb-search', bar: '#main .bb-sections [data-section]', items: '#main .bb-cards > li[data-id], #main .bb-shared > li, #main .bb-batch-list > li[data-id], #main div.bb-batches > .bb-batch-row', open: el => click(el.querySelector('.bb-card, .bb-batch-row') || el) },
+  recipes: { search: '.bb-search', items: '#main .bb-card, #main .bb-batch-row', open: el => click(el) },
   contracts: { search: '.contract-search', items: '#main tr[data-id], #main .contract-card', open: el => click(el.querySelector('a') || el) },
 };
 

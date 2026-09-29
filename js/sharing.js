@@ -12,7 +12,7 @@ import { askYes } from './ask.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 export const personName = sync.personName;
-const KIND_WORDS = { list: 'a list', note: 'a note', recipe: 'a recipe', days: 'their diary' };
+const KIND_WORDS = { list: 'a list', note: 'a note', days: 'their diary' };
 const sameScope = (a, b) => a.kind === b.kind && (a.kind === 'days' ? a.from === b.from && a.to === b.to : a.id === b.id);
 const fmtDate = d => new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 
@@ -134,7 +134,7 @@ export function installSharing() {
   });
   sync.onShares(list => {
     const waiting = list.filter(sh => !sh.mine && !sh.accepted);
-    if (seen) for (const sh of waiting.filter(x => !seen.has(x.id))) toast(`${personName(sh.owner_email)} wants to share ${sh.info.kind === 'days' ? 'their day plan' : KIND_WORDS[sh.info.kind]} with you: see ${sh.info.kind === 'list' ? 'Lists' : sh.info.kind === 'note' ? 'Brain Dump' : sh.info.kind === 'recipe' ? 'Batch Book' : 'the Day Planner'}`);
+    if (seen) for (const sh of waiting.filter(x => !seen.has(x.id))) toast(`${personName(sh.owner_email)} wants to share ${sh.info.kind === 'days' ? 'their day plan' : KIND_WORDS[sh.info.kind]} with you: see ${sh.info.kind === 'list' ? 'Lists' : sh.info.kind === 'note' ? 'Brain Dump' : 'the Day Planner'}`);
     seen = new Set(waiting.map(sh => sh.id));
   });
 }

@@ -58,14 +58,14 @@ async function thumbnail(file) {
   } catch { return null; }   // a format this browser can't draw: it shows as a file chip
 }
 
-export async function addFiles(parent, files, ids = []) {
+export async function addFiles(parent, files) {
   const made = [];
   const skipped = [];
-  for (const [index, file] of files.entries()) {
+  for (const file of files) {
     const kind = kindOf(file.type, file.name);
     if (!kind) { skipped.push(`${file.name} (only photos, PDFs and text files)`); continue; }
     if (file.size > MAX_BYTES) { skipped.push(`${file.name} (over ${sizeLabel(MAX_BYTES)})`); continue; }
-    const id = ids[index] || store.uuidv7();   // fixed ids: examples.js
+    const id = store.uuidv7();
     await store.putBlob(id, file);
     made.push(await store.create('attachments', {
       id, parent_collection: parent.collection, parent_id: parent.id, blob_id: id,
@@ -101,7 +101,7 @@ export function rowHtml(atts = [], { addButton = true, parent = atts[0]?.parent_
       <button type="button" class="att-x" data-att-remove="${a.id}" title="Remove" aria-label="Remove ${esc(a.name)}">×</button>
     </span>`;
   }).join('');
-  const add = addButton ? `<button type="button" class="att-add" data-att-add title="Attach photos, PDFs or text files (or drop them here)">${icon('i-clip')}<span>${typeof addButton === 'string' ? esc(addButton) : 'Attach'}</span></button>` : ''; // addButton: true, or its own words
+  const add = addButton ? `<button type="button" class="att-add" data-att-add title="Attach photos, PDFs or text files (or drop them here)">${icon('i-clip')}<span>Attach</span></button>` : '';
   return `<div class="att-row" data-att-parent="${esc(parent)}">${items}${add}</div>`;
 }
 
@@ -109,7 +109,7 @@ export async function redrawRows(root, parentId) {
   const rows = parentId ? [...root.querySelectorAll(`.att-row[data-att-parent="${CSS.escape(parentId)}"]`)] : [];
   if (!rows.length) return false;
   const list = (await byParent()).get(parentId) || [];
-  for (const r of rows) r.outerHTML = rowHtml(list, { addButton: r.querySelector('[data-att-add] span')?.textContent || false, parent: parentId });
+  for (const r of rows) r.outerHTML = rowHtml(list, { addButton: !!r.querySelector('[data-att-add]'), parent: parentId });
   return true;
 }
 

@@ -25,7 +25,6 @@
 //   families: rows keep their depth and a parent carries its children, but there's no indenting
 //   grid: true for cards laid out in rows and columns (drag follows the pointer both ways)
 //   after each render: kit.attach(ul)        on leaving the view: kit.destroy()
-//   kit.toggle(id, range): select or deselect a row from the view's own gesture (range: Shift, the run from the last one picked)
 //   onReorder(rows, label, ul, moved): rows = [{ id, depth }] in the new order; moved =
 //     the ids that were moved (so only they need a new place: order.js); persist them
 //   actions: [{ id, label, danger?, key?, group?, when?, run(ids) }]; ids are in list order;
@@ -48,12 +47,6 @@ export function createListKit({
 } = {}) {
   const selected = new Set();
   let anchor = null;
-  // Select or deselect a row; with range (Shift), every row from the last one picked to this one is selected.
-  const pick = (id, range) => {
-    if (range && anchor) { const ids = rows().map(r => r.dataset.id); const [a, b] = [ids.indexOf(anchor), ids.indexOf(id)].sort((x, y) => x - y); ids.slice(a, b + 1).forEach(x => selected.add(x)); }
-    else selected.has(id) ? selected.delete(id) : selected.add(id);
-    anchor = id; cursor = null;
-  };
   let cursor = null; // the moving end of a Shift+↑ / ↓ range (anchor: the fixed end)
   let paintBase = null;
   let ul = null;
@@ -233,7 +226,20 @@ export function createListKit({
       holdMs: reorder ? 260 : 100000, // without reordering, a hold does nothing
       keyboard: reorder,
       grid,
-      onTap: (li, ev) => { pick(li.dataset.id, ev.shiftKey); leaveTyping(); paint(); },
+      onTap: (li, ev) => {
+        const id = li.dataset.id;
+        if (ev.shiftKey && anchor) {
+          const ids = rows().map(r => r.dataset.id);
+          const [a, b] = [ids.indexOf(anchor), ids.indexOf(id)].sort((x, y) => x - y);
+          ids.slice(a, b + 1).forEach(x => selected.add(x));
+        } else {
+          selected.has(id) ? selected.delete(id) : selected.add(id);
+        }
+        anchor = id;
+        cursor = null;
+        leaveTyping();
+        paint();
+      },
       onPaint: (from, to) => {
         const all = rows();
         const [a, b] = [all.indexOf(from), all.indexOf(to)].sort((x, y) => x - y);
@@ -463,8 +469,6 @@ export function createListKit({
   return {
     attach,
     clear,
-    // Add a row to the selection, or take it out (e.g. a view's own press and hold, or a tap while choosing).
-    toggle(id, range = false) { pick(id, range); paint(); },
     get selected() { return selected; },
     get size() { return selected.size; },
     // Call from the view's Escape handler; returns true if it cleared something.

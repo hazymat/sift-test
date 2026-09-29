@@ -130,7 +130,6 @@ export async function register(server, email, password) {
     device_name: deviceName(),
   }, server);
   await keep(server, email, login, dataKeyRaw);
-  await store.metaSet('new_account', true); // a brand new account: Batch Book's examples may be added (examples.js)
   return cx.recoveryCode(dataKeyRaw);
 }
 
@@ -253,10 +252,8 @@ async function pullShares() {
 const IN_SCOPE = {
   list: (info, c, r) => (c === 'lists' && r.id === info.id) || (c === 'list_items' && r.list_id === info.id),
   note: (info, c, r) => c === 'thoughts' && r.id === info.id,
-  recipe: (info, c, r) => (c === 'recipes' && r.id === info.id) || ((c === 'recipe_makes' || c === 'recipe_entries') && r.recipe_id === info.id),
   days: (info, c, r) => (c === 'days' || c === 'day_items') && !!r.date && (!info.from || r.date >= info.from) && (!info.to || r.date <= info.to),
 };
-const SHAREABLE = ['lists', 'list_items', 'thoughts', 'days', 'day_items', 'recipes', 'recipe_makes', 'recipe_entries'];
 export const inShare = (sh, c, r) => !!IN_SCOPE[sh.info?.kind]?.(sh.info, c, r);
 function routes(space, c, r) {
   return shares.filter(sh => sh.accepted && (space.isLocal ? sh.mine : !sh.mine && space === store.spaceOf(sh.owner_id)) && inShare(sh, c, r)).map(sh => sh.id);
@@ -330,7 +327,7 @@ async function pushSpace(space) {
 // ---------- sharing ----------
 // Shares this account is in (its own, and others' it accepted or is invited
 // to), each with its key and what it holds (info: { kind: 'list' | 'note' |
-// 'recipe' | 'days', id | from, to, name }). Kept on this device between syncs.
+// 'days', id | from, to, name }). Kept on this device between syncs.
 
 let shares = [];
 let privateKey = null;
@@ -388,7 +385,7 @@ async function forgetShare(gone, still) {
   const others = still.filter(sh => sh.accepted && !sh.mine && sh.owner_id === gone.owner_id);
   if (!others.length) return store.dropSpace(gone.owner_id);
   const space = store.spaceOf(gone.owner_id);
-  for (const c of SHAREABLE) {
+  for (const c of ['lists', 'list_items', 'thoughts', 'days', 'day_items']) {
     const ids = (await space.list(c, { includeDeleted: true })).filter(r => inShare(gone, c, r) && !others.some(sh => inShare(sh, c, r))).map(r => r.id);
     await space.forget(c, ids);
   }
@@ -412,7 +409,7 @@ export async function shareWith(info, email) {
     const shareKeys = await cx.workingKeys(raw);
     await api('POST', '/api/shares', { id, wrapped_key: await cx.sealShareKey(await store.metaGet('share_public'), raw), info: await cx.sealJson(shareKeys, info) });
     // What is already there goes up to the share.
-    for (const c of SHAREABLE) {
+    for (const c of ['lists', 'list_items', 'thoughts', 'days', 'day_items']) {
       const probe = { info };
       const ids = (await store.local.list(c, { includeDeleted: true })).filter(r => inShare(probe, c, r)).map(r => r.id);
       if (ids.length) await store.local.queue(c, ids, [id]);
@@ -433,7 +430,7 @@ export async function leaveShare(id, userId = account.user_id) { await api('DELE
 // Stop sharing: it stays yours (back into your own records); everyone else loses it.
 export async function stopSharing(id) {
   const sh = shares.find(x => x.id === id);
-  for (const c of SHAREABLE) {
+  for (const c of ['lists', 'list_items', 'thoughts', 'days', 'day_items']) {
     const ids = (await store.local.list(c, { includeDeleted: true })).filter(r => sh && inShare(sh, c, r)).map(r => r.id);
     if (ids.length) await store.local.queue(c, ids, null);
   }

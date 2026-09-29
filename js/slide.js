@@ -19,7 +19,7 @@ import { flash, unflash, WASH } from './flash.js';
 const main = () => document.getElementById('main');
 const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 // The part of the page that changes (app.css: the same list).
-const region = () => document.querySelector('#task-body, #thoughts, #main .planner, #main .bb-body') || main();
+const region = () => document.querySelector('#task-body, #thoughts, #main .planner') || main();
 
 // A tab bar's highlight (the underline under Now, or a filter) glides from
 // where it was to the new tab; the real one shows again when it gets there.
@@ -80,8 +80,7 @@ export function drawnAfter(fn) {
   return new Promise((done, none) => {
     let changed = false, over = false, quiet = 0;
     const finish = () => { if (over) return; over = true; seen.disconnect(); changed ? done() : none(); };
-    // A class changing (a tab's flash at the end of the bar, the keyboard's highlight) isn't a change of page.
-    const seen = new MutationObserver(list => { if (list.every(m => m.type === 'attributes' && m.attributeName === 'class')) return; changed = true; clearTimeout(quiet); quiet = setTimeout(finish, 30); });
+    const seen = new MutationObserver(() => { changed = true; clearTimeout(quiet); quiet = setTimeout(finish, 30); });
     seen.observe(el, { childList: true, subtree: true, attributes: true, characterData: true });
     fn();
     quiet = setTimeout(finish, 120);

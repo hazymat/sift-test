@@ -386,7 +386,7 @@ async function renderSyncStatus() {
 function stepUp(hash) {
   const [id, ...rest] = hash.replace(/^#\/?/, '').split('/');
   if (!rest.length) return null;
-  if (id === 'recipes' && rest[1] === 'make') return rest.includes('list') ? '#/recipes' : `#/recipes/${rest[0]}`; // a batch opened from the batches list goes back to it
+  if (id === 'recipes' && rest[1] === 'make') return `#/recipes/${rest[0]}`;
   if (['lists', 'scans', 'contracts', 'recipes'].includes(id)) return `#/${id}`;
   if (id === 'contacts') {
     if (rest[0] === 'c') return '#/contacts';
@@ -647,12 +647,10 @@ async function boot() {
       refreshPage().catch(err => console.warn('Refresh after sync failed:', err));
     };
     document.addEventListener('focusout', () => setTimeout(() => { if (waiting) update(); }, 50));
-    let firstOk = false;
     sync.onStatus(st => {
       renderSyncStatus();
       // New records, or files that were "still arriving" now here: update the page.
-      const records = was === 'syncing' && st.state === 'ok' && (st.changed || (!firstOk && location.hash.startsWith('#/recipes'))); // Batch Book's one time reset waits for the first sync
-      if (st.state === 'ok') firstOk = true;
+      const records = was === 'syncing' && st.state === 'ok' && st.changed;
       const files = wasFiles === 'syncing' && st.files === 'idle' && st.filesArrived;
       if (records || files) update();
       was = st.state;

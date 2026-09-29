@@ -1,6 +1,6 @@
 // App shell cache. VERSION is replaced with the commit id on deploy
 // (see .github/workflows/pages.yml), so every release gets a fresh cache.
-const VERSION = '205ac31';
+const VERSION = 'bcf9c47';
 const CACHE = `sifttest-${VERSION}`;
 
 const SHELL = [
@@ -12,7 +12,6 @@ const SHELL = [
   'js/app.js',
   'js/store.js',
   'js/sortable.js',
-  'js/rows.js',
   'js/dropdown.js',
   'js/colours.js',
   'js/comments.js',
@@ -39,7 +38,6 @@ const SHELL = [
   'js/history.js',
   'js/lists.js',
   'js/batchbook.js',
-  'js/examples.js',
   'js/views/lists.js',
   'js/listkit.js',
   'js/inline.js',

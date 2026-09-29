@@ -84,21 +84,14 @@ export function lookHtml(area) {
 const LAYOUTS = {
   tasks: [
     { id: 'lined', label: 'Lined Paper' },
+    { id: 'new-top', label: 'New task line at the top', needs: 'lined' },
     { id: 'margin', label: 'Show margin', needs: 'lined' },
+    { id: 'empty-lines', label: 'Show additional lines when list is empty', def: true, needs: 'lined' },
     { id: 'new-focus', label: 'Start typing a new task on arriving', def: true },
     { id: 'add-top', label: 'New tasks appear at top', def: true },
     { id: 'added-flash', label: 'Highlight task when added', def: true },
     { id: 'pills-hide', label: 'Hide pills behind More (editing / new)', def: true },
     { id: 'more-panel', label: 'More goes straight to the full panel', needs: 'pills-hide' },
-  ],
-  lists: [
-    { id: 'lined', label: 'Lined Paper' },
-    { id: 'margin', label: 'Show margin', needs: 'lined' },
-    { id: 'added-flash', label: 'Highlight item when added', def: true },
-  ],
-  recipes: [
-    { id: 'lined', label: 'Lined paper', def: true },
-    { id: 'margin', label: 'Show margin', def: true, needs: 'lined' },
   ],
   planner: [
     { id: 'day-rel', label: 'Show "Today" or "In 5 days" under the date', def: true },

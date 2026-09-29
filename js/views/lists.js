@@ -1,12 +1,12 @@
 // Lists: templates you reuse (packing, the weekly shop), the copies made
 // from them, and plain lists. #/lists  and  #/lists/<list id>
 
-import { cogHtml, layoutOn } from '../viewcog.js';
+import { cogHtml } from '../viewcog.js';
 import { shareHtml } from '../share.js';
 import * as store from '../store.js';
 import { loadLists, nestItems, progress, createList, addItems, useTemplate, missingFromTemplate } from '../lists.js';
 import { createListKit } from '../listkit.js';
-import { listEntry, listHint } from '../listentry.js';
+import { listEntry, listHint, SHORTCUT } from '../listentry.js';
 import { toast, undoable } from '../toast.js';
 import { richText, previewLine } from '../richtext.js';
 import { debounced } from '../autosave.js';
@@ -17,29 +17,14 @@ import { tintHex, tintId, colourMenu } from '../colours.js';
 import { rankOf, reorderWrites } from '../order.js';
 import { dateText } from '../days.js';
 import { shareSheet, sharedWithText, people, invitesHtml, theirsHtml } from '../sharing.js';
-import { askEmptied } from '../ask.js';
-import { rowSwipe } from '../rowswipe.js';
-import { keyBetween } from '../order.js';
-import { treeHtml, groupOf, measureRows, slideRows } from '../rows.js';
-import { flash, SOFT } from '../flash.js';
-import { touch } from '../editpills.js';
-import { atEdge, caretTo } from '../walk.js';
+import { keys } from '../keys.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const icon = id => `<svg class="icon" aria-hidden="true"><use href="#${id}"/></svg>`;
 const shortDate = iso => dateText(new Date(iso), { day: 'numeric', month: 'short', year: 'numeric' });
-// 👁 Layout switches (viewcog.js): Lined paper and its margin, as in Tasks.
-const lay = id => layoutOn('lists', id);
-const wait = ms => new Promise(done => setTimeout(done, ms));
 
 export default {
   async mount(el) {
-    // Page-wide listeners are tied to this signal and removed in unmount().
-    this.gone?.abort();
-    const gone = this.gone = new AbortController();
-    document.addEventListener('sift-layout', ev => { if (ev.detail?.area === 'lists') render(); }, { signal: gone.signal });
-    const collapsed = new Set(); // items whose sub-items are folded away
-    let chainAfter = null; // Enter in a new item's line: another line opens after it once drawn
     let nameNext = null; // a list just made: select its name for typing
     let atts = new Map(); // list item id → its attachments
     let focusAdd = false; // Enter or Tab from the list name carries on into "Add items"
@@ -110,15 +95,11 @@ export default {
 
     let openItem = null;
     let pendingNote = null;
-    // Under the item: its sub-items' count (▾ folds them away, as in Tasks), then the
-    // note's first line; clicking the note opens the panel.
-    function subLine(i, isTemplate) {
-      const kids = i.depth ? [] : data.items.filter(k => k.parent_id === i.id && k.list_id === i.list_id);
-      const count = isTemplate ? kids.length : `${progress(kids).done}/${kids.length}`;
-      const chip = kids.length ? `<span class="chips"><button type="button" class="chip kids" data-act="collapse" aria-expanded="${!collapsed.has(i.id)}">${collapsed.has(i.id) ? '▸' : '▾'} ${count}</button></span>` : '';
+    // Under the item: the note's first line; clicking it opens the panel.
+    function noteLine(i) {
       const { html, more } = previewLine(i.notes || '');
-      const note = html && openItem !== i.id ? `<span class="item-note task-note" data-act="item-details" role="button" tabindex="0" title="Open to read or edit">${html}${more ? ` <span class="more-lines">+${more} more</span>` : ''}</span>` : ''; // the open panel already shows the whole note
-      return chip || note ? `<div class="item-sub">${chip}${note}</div>` : '';
+      if (!html || openItem === i.id) return ''; // the open panel already shows the whole note
+      return `<div class="item-sub"><span class="item-note task-note" data-act="item-details" role="button" tabindex="0" title="${openItem === i.id ? 'Close' : 'Open to read or edit'}">${html}${more ? ` <span class="more-lines">+${more} more</span>` : ''}</span></div>`;
     }
     const noteAuto = debounced(async () => {
       const p = pendingNote;
@@ -152,44 +133,20 @@ export default {
       const isTemplate = l.kind === 'template';
       const all = nestItems(itemsOf(l.id));
       const pr = progress(all);
-      // Ticked ones hidden (Hide ticked), and sub-items of a folded item.
-      const shown = all.filter(i => !(state.hideTicked && i.checked_at) && !(i.depth && collapsed.has(i.parent_id)));
+      const shown = state.hideTicked ? all.filter(i => !i.checked_at) : all;
       const template = l.template_id && listOf(l.template_id);
       const copies = isTemplate ? data.lists.filter(x => x.template_id === l.id) : [];
       const missing = template ? missingFromTemplate(all, itemsOf(template.id)) : [];
       const from = theirs();
       const who = sharedWithText({ kind: 'list', id: l.id });
-      // Items are drawn as Tasks draws tasks (rows.js): cards, or lined paper (👁), sub-items joined by fine lines.
-      const row = (i, n) => `
-          <li data-id="${i.id}" data-task="${i.id}" data-depth="${i.depth}" class="${i.checked_at ? 'done' : ''} ${groupOf(shown, n)}">${treeHtml(shown, n, lay('margin'))}
-            <button type="button" class="drag-handle" aria-label="Select or move">${icon('i-grip')}</button>
-            ${isTemplate ? '<input type="checkbox" class="tick" disabled tabindex="-1" aria-hidden="true" style="visibility:hidden">' : `<input type="checkbox" class="tick" ${i.checked_at ? 'checked' : ''} aria-label="Ticked">`}
-            <input class="task-title" name="text" value="${esc(i.text)}" aria-label="Item" autocomplete="off">
-            <button type="button" class="more" data-act="item-details" aria-label="Details" aria-expanded="${openItem === i.id}">⋯</button>
-            ${subLine(i, isTemplate)}
-          </li>
-          ${openItem === i.id ? `<li class="task-details list-panel" data-for="${i.id}">
-            <div class="list-notes"></div>
-            ${att.rowHtml(atts.get(i.id), { parent: i.id })}
-            <div class="detail-actions">
-              <button type="button" class="close-details" data-act="close-item" title="Close (or Esc)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Close</button>
-              <span class="spacer"></span>
-              <button type="button" data-act="archive-item">Archive</button>
-              <button type="button" class="danger" data-act="remove">Delete</button>
-            </div>
-          </li>` : ''}`;
-      // The name, progress, Reset ticks and Show / hide ticked stay at the top while the items scroll.
       return `
-        <div class="list-top-mark" aria-hidden="true"></div>
-        <div class="list-top">
         ${from ? theirsHtml(`${from.name} shared this ${isTemplate ? 'template' : 'list'} with you. You can both change it.`, `<button type="button" data-share-leave="${from.share.id}">Leave</button>`) : ''}
         <div class="project-head">
           <button type="button" class="back" data-act="home">‹ Lists</button>
           <button type="button" class="note-dot list-colour" data-act="list-colour" title="List colour" aria-label="List colour"><span class="swatch" style="--sw:${tintHex(l)}"></span></button>
           <input class="project-name" name="name" value="${esc(l.name)}" data-list-name="${l.id}" aria-label="List name" placeholder="${esc(word('ph_list_name'))}">
-          ${isTemplate ? '<span class="chip">Template</span>' : ''}
-          ${from ? '' : `<button type="button" class="share-btn-people" data-act="share-people" title="${who ? `Shared with ${esc(who)}` : 'Share with someone on your server'}">👥<span class="share-words"> ${who ? `Shared with ${esc(who)}` : 'Share'}</span></button>`}
-          ${cogHtml('lists')}
+          <span class="chip">${isTemplate ? 'Template' : template ? 'From a template' : 'List'}</span>
+          ${from ? '' : `<button type="button" class="share-btn-people" data-act="share-people" title="Share with someone on your server">👥 ${who ? `Shared with ${esc(who)}` : 'Share'}</button>`}
         </div>
         ${isTemplate ? `
           <div class="list-actions">
@@ -204,22 +161,34 @@ export default {
             ${template ? `<span class="muted">from <a href="#/lists/${template.id}">${esc(template.name)}</a></span>` : ''}
             ${missing.length ? `<button type="button" data-act="add-missing">Add ${missing.length} missing from template</button>` : ''}
           </div>`}
-        </div>
-        <div class="task-entry list-entry-box" id="list-entry">
-          <div class="task-add-line">
-            <span class="add-mark" aria-hidden="true"></span>
-            <textarea id="list-new" class="new-task-line list-entry" rows="1" placeholder="${esc(word('ph_add_items'))}" enterkeyhint="done" aria-label="New item"></textarea>
-            <button type="button" class="entry-add" data-act="add" title="Add (Enter)">Add <kbd>Enter</kbd></button>
-          </div>
-          <p class="muted hint list-hint">${listHint({ enterAdds: true })}</p>
-        </div>
-        <ul class="task-list checklist" style="--tint: ${tintHex(l)}">${shown.map(row).join('')}</ul>
+        <ul class="task-list checklist" style="--tint: ${tintHex(l)}">${shown.map(i => `
+          <li data-id="${i.id}" data-depth="${i.depth}" class="${i.checked_at ? 'done' : ''}">
+            <button type="button" class="drag-handle" aria-label="Select or move">${icon('i-grip')}</button>
+            ${isTemplate ? '' : `<input type="checkbox" class="tick" ${i.checked_at ? 'checked' : ''} aria-label="Ticked">`}
+            <input class="task-title" name="text" value="${esc(i.text)}" aria-label="Item" autocomplete="off">
+            <button type="button" class="more" data-act="item-details" aria-label="Details" aria-expanded="${openItem === i.id}">⋯</button>
+            ${noteLine(i)}
+          </li>
+          ${openItem === i.id ? `<li class="task-details list-panel" data-for="${i.id}">
+            <div class="list-notes"></div>
+            ${att.rowHtml(atts.get(i.id), { parent: i.id })}
+            <div class="detail-actions">
+              <button type="button" class="close-details" data-act="close-item" title="Close (or Esc)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Close</button>
+              <span class="spacer"></span>
+              <button type="button" data-act="archive-item">Archive</button>
+              <button type="button" class="danger" data-act="remove">Delete</button>
+            </div>
+          </li>` : ''}`).join('')}
+        </ul>
         ${state.hideTicked && pr.done ? `<p class="muted hint">${pr.done} ticked item${pr.done === 1 ? '' : 's'} hidden.</p>` : ''}
-        ${from ? '' : `<div class="detail-actions list-end">
+        <textarea id="list-new" class="list-entry" rows="2" placeholder="${esc(word('ph_add_items'))}"></textarea>
+        <p class="muted hint">${listHint({ enterAdds: true })}</p>
+        <div class="detail-actions">
+          <button type="button" data-act="add">Add items ${keys(SHORTCUT)}</button>
           <span class="spacer"></span>
-          <button type="button" data-act="archive-list">Archive list</button>
-          <button type="button" class="danger" data-act="delete-list">Delete list</button>
-        </div>`}`;
+          ${from ? '' : `<button type="button" data-act="archive-list">Archive list</button>
+          <button type="button" class="danger" data-act="delete-list">Delete list</button>`}
+        </div>`;
     }
 
     // ---------- render ----------
@@ -253,25 +222,8 @@ export default {
       mountNotes();
       const ta = body.querySelector('#list-new');
       if (ta && focusAdd) { focusAdd = false; ta.focus(); }
-      if (ta) {
-        addEntry = listEntry(ta, addLines, { draft: `lists:${state.id || 'new'}`, enterAdds: true });
-        // One line, growing with what's typed or pasted.
-        const fit = () => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight}px`; };
-        ta.addEventListener('input', fit);
-        fit();
-      }
-      measureRows(body, body.querySelector('.checklist'), ta);
-      // The top gets a glass backing once it sticks (as Brain Dump's bar).
-      this.topWatch?.disconnect();
-      const mark = body.querySelector('.list-top-mark'), top = body.querySelector('.list-top');
-      if (mark && top) {
-        this.topWatch = new IntersectionObserver(([e]) => top.classList.toggle('stuck', !e.isIntersecting && e.boundingClientRect.top < 200), { rootMargin: `-${parseFloat(getComputedStyle(top).top) || 0}px 0px 0px 0px` });
-        this.topWatch.observe(mark);
-      }
-      if (chainAfter) { const id = chainAfter; chainAfter = null; openNewAfter(id); }
+      if (ta) addEntry = listEntry(ta, addLines, { draft: `lists:${state.id || 'new'}`, enterAdds: true });
     };
-    // New items pulse once, soft blue, and the list scrolls to them (👁 Highlight item when added).
-    const showAdded = ids => { if (lay('added-flash')) ids.forEach((id, n) => flash(body.querySelector(`.checklist > li[data-id="${id}"]`), Object.assign({ scroll: n ? false : 'nearest' }, SOFT))); };
 
     // ---------- editing ----------
 
@@ -280,7 +232,6 @@ export default {
       const made = await addItems(state.id, lines, nestItems(itemsOf(state.id)));
       await render();
       body.querySelector('#list-new')?.focus();
-      showAdded(made.map(m => m.id));
       undoable(`Added ${made.length} item${made.length === 1 ? '' : 's'}`, async () => {
         await store.updateMany('list_items', made.map(m => [m.id, { deleted_at: new Date().toISOString() }]));
         render();
@@ -319,124 +270,6 @@ export default {
       undoable(`${label} ${all.length} item${all.length === 1 ? '' : 's'}`, async () => { await store.updateMany('list_items', before); render(); });
     }
 
-    // Dropped onto the middle of another item: they become its sub-items, at the end of its
-    // group. Onto a sub-item: they join that group, just after it. One level only.
-    async function nestUnder(ids, targetId) {
-      const target = data.items.find(i => i.id === targetId);
-      if (!target) return render();
-      const parentId = target.parent_id || target.id;
-      const moving = ids.map(id => data.items.find(i => i.id === id)).filter(i => i && i.id !== parentId && i.id !== targetId);
-      if (!moving.length) return render();
-      if (moving.some(i => data.items.some(k => k.parent_id === i.id))) { toast('Sub-items go one level deep'); return render(); }
-      const inList = data.items.filter(i => i.list_id === target.list_id && !moving.includes(i));
-      const after = (target.parent_id ? [target] : inList.filter(i => i.id === parentId || i.parent_id === parentId)).map(i => rankOf(i)).sort().at(-1);
-      const next = inList.map(i => rankOf(i)).filter(k => k > after).sort()[0] || null;
-      const before = moving.map(i => [i.id, { parent_id: i.parent_id ?? null, rank: i.rank ?? null }]);
-      let k = after;
-      await store.updateMany('list_items', moving.map(i => { k = keyBetween(k, next); return [i.id, { parent_id: parentId, rank: k }]; }));
-      collapsed.delete(parentId);
-      await render();
-      const parent = data.items.find(i => i.id === parentId);
-      undoable(`${moving.length === 1 ? `"${moving[0].text}" is` : `${moving.length} items are`} now under "${parent?.text || ''}"`, async () => { await store.updateMany('list_items', before); await render(); });
-    }
-
-    // Phones: swipe an item sideways (rowswipe.js): left for ⋯ More and ✓ Tick, right for Delete.
-    rowSwipe(el, {
-      rows: '.checklist > li[data-id]',
-      actions: li => ({
-        left: [
-          { label: '⋯ More', cls: 'ra-more', run: row => row.querySelector(':scope > [data-act="item-details"]')?.click() },
-          ...(li.querySelector(':scope > .tick:not([disabled])') ? [{ label: li.classList.contains('done') ? '↺ Untick' : '✓ Tick', cls: 'ra-done', run: row => row.querySelector(':scope > .tick')?.click() }] : []),
-        ],
-        right: [{ label: 'Delete', cls: 'ra-delete', run: row => batch([row.dataset.id], { deleted_at: new Date().toISOString() }, 'Removed') }],
-      }),
-    });
-
-    // Enter in an item's name (as in Tasks): a new line just below it and its sub-items, at
-    // the same level. Enter there adds it and opens the next; Tab / Shift+Tab or "- " change
-    // its level; Esc or leaving it empty drops the line.
-    function openNewAfter(id) {
-      const item = data.items.find(i => i.id === id);
-      const li = body.querySelector(`.checklist > li[data-id="${id}"]`);
-      if (!item || !li) return;
-      const d = Number(li.dataset.depth || 0);
-      let last = li;
-      while (last.nextElementSibling && !(last.nextElementSibling.matches('li[data-id]') && Number(last.nextElementSibling.dataset.depth || 0) <= d)) last = last.nextElementSibling;
-      const row = document.createElement('li');
-      row.className = `task-new-row${d ? ' group-kid' : ''}`;
-      row.dataset.task = ''; // laid out like an item (CSS), but not one yet
-      row.dataset.depth = d;
-      row.innerHTML = `<span class="drag-handle" aria-hidden="true" style="visibility:hidden">${icon('i-grip')}</span>
-        <input type="checkbox" class="tick" disabled tabindex="-1" aria-hidden="true">
-        <input class="task-title no-inline" placeholder="${d ? 'New sub-item' : 'New item'}" aria-label="New item" autocomplete="off">`;
-      last.after(row);
-      const input = row.querySelector('.task-title');
-      const setLevel = n => { row.dataset.depth = n; row.classList.toggle('group-kid', n > 0); input.placeholder = n ? 'New sub-item' : 'New item'; };
-      let done = false;
-      const finish = async chain => {
-        if (done) return;
-        done = true;
-        const text = input.value.trim();
-        if (!text) { row.remove(); return; }
-        const sub = Number(row.dataset.depth || 0) > 0;
-        const inList = data.items.filter(i => i.list_id === item.list_id);
-        const after = (d ? [item] : inList.filter(i => i.id === item.id || i.parent_id === item.id)).map(i => rankOf(i)).sort().at(-1);
-        const next = inList.map(i => rankOf(i)).filter(k => k > after).sort()[0] || null;
-        const made = await store.create('list_items', { list_id: item.list_id, text, notes: '', parent_id: sub ? (d ? item.parent_id : item.id) : null, sort_order: 0, rank: keyBetween(after, next), checked_at: null });
-        if (chain) chainAfter = made.id;
-        await render();
-        showAdded([made.id]);
-        undoable(`Added ${sub ? 'sub-item' : 'item'}: ${text}`, async () => { await store.remove('list_items', made.id); await render(); });
-      };
-      input.addEventListener('input', () => {
-        const m = input.value.match(/^[-*•] /);
-        if (!m || Number(row.dataset.depth)) return;
-        setLevel(1);
-        input.value = input.value.slice(m[0].length);
-      });
-      input.addEventListener('keydown', ev => {
-        if (ev.key === 'Tab' && !ev.ctrlKey && !ev.altKey && !ev.metaKey) { ev.preventDefault(); ev.stopPropagation(); setLevel(ev.shiftKey ? 0 : 1); return; }
-        if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); ev.stopPropagation(); finish(true); }
-        else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finish(false); }
-      });
-      input.addEventListener('blur', () => finish(false));
-      input.focus();
-    }
-    body.addEventListener('keydown', async ev => {
-      const t = ev.target;
-      if (ev.key !== 'Enter' || ev.ctrlKey || ev.metaKey || ev.altKey || ev.isComposing || !t.matches?.('.checklist > li[data-id] > .task-title')) return;
-      const id = t.closest('li').dataset.id;
-      // Shift+Enter: on into the item's note (its panel), as in Tasks.
-      if (ev.shiftKey) {
-        ev.preventDefault(); ev.stopPropagation();
-        t.blur();
-        if (openItem !== id) await toggleItem(id);
-        body.querySelector('.list-panel .list-notes .rich-edit')?.focus();
-        return;
-      }
-      if (t.value.trim()) setTimeout(() => openNewAfter(id), 0); // after inline.js saves it
-    }, { capture: true });
-
-    // ↑ / ↓ in an item's name: straight to the item above / below; from the top one up to
-    // the new item line, and from there down into the list.
-    body.addEventListener('keydown', ev => {
-      if ((ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') || ev.defaultPrevented || ev.shiftKey || ev.ctrlKey || ev.altKey || ev.metaKey || ev.isComposing) return;
-      const t = ev.target;
-      if (!t.matches?.('#list-new, .checklist > li[data-id] > .task-title')) return;
-      const up = ev.key === 'ArrowUp';
-      if (t.id === 'list-new' && !atEdge(t, up ? 'up' : 'down')) return;
-      const stops = [body.querySelector('#list-new'), ...body.querySelectorAll('.checklist > li[data-id] > .task-title')].filter(f => f?.getClientRects().length);
-      const to = stops[stops.indexOf(t) + (up ? -1 : 1)];
-      if (!to) return;
-      ev.preventDefault();
-      to.focus();
-      caretTo(to, up ? 'end' : 'start');
-    });
-
-    // Click on the empty part of the page: the new item line (not on a phone, where the
-    // keyboard only comes up for a tap in the line itself).
-    body.addEventListener('click', ev => { if (!touch && state.id && (ev.target === body || ev.target.matches('.checklist, .list-entry-box'))) body.querySelector('#list-new')?.focus(); });
-
     async function addToTemplate(ids) {
       const l = listOf(state.id);
       const template = l?.template_id && listOf(l.template_id);
@@ -456,11 +289,8 @@ export default {
       { id: 'archive', label: 'Archive', run: ids => batch(ids, { archived_at: new Date().toISOString() }, 'Archived') },
       { id: 'delete', label: 'Delete', danger: true, run: ids => batch(ids, { deleted_at: new Date().toISOString() }, 'Removed') },
     ];
-    // As in Tasks: press and hold anywhere on an item moves it; dropped onto another item it
-    // becomes its sub-item; a sub-item dragged down off the end of its group comes out of it.
-    const dragRules = { reorder: true, indent: true, maxDepth: 1, holdAnywhere: true, sideways: false, onNest: (ids, target) => nestUnder(ids, target), noun: 'item', onReorder: persistOrder };
     const kitChecklist = this.kitChecklist = createListKit({
-      ...dragRules,
+      reorder: true, indent: true, maxDepth: 1, noun: 'item', onReorder: persistOrder,
       actions: [
         { id: 'tick', label: 'Tick', run: ids => batch(ids, { checked_at: new Date().toISOString() }, 'Ticked', { subs: false }) },
         { id: 'untick', label: 'Untick', run: ids => batch(ids, { checked_at: null }, 'Unticked', { subs: false }) },
@@ -468,7 +298,7 @@ export default {
         ...common,
       ],
     });
-    const kitTemplate = this.kitTemplate = createListKit({ ...dragRules, actions: common });
+    const kitTemplate = this.kitTemplate = createListKit({ reorder: true, indent: true, maxDepth: 1, noun: 'item', onReorder: persistOrder, actions: common });
     let kit = kitChecklist;
 
     // Naming a list: Enter or Tab saves the name and goes on to "Add items".
@@ -501,15 +331,6 @@ export default {
       if (t.classList.contains('tick')) {
         const old = item.checked_at;
         await store.update('list_items', item.id, { checked_at: t.checked ? new Date().toISOString() : null });
-        // With ticked ones hidden it fades and the items below slide up into its place.
-        if (t.checked && state.hideTicked) {
-          li.classList.add('done', 'ticked-away');
-          li.style.setProperty('--fade', '700ms');
-          void li.offsetHeight;
-          li.classList.add('fading');
-          await wait(700);
-          await slideRows([li], false);
-        }
         await render();
         undoable(t.checked ? `Ticked "${item.text}"` : `Unticked "${item.text}"`, async () => { await store.update('list_items', item.id, { checked_at: old }); render(); });
       } else if (t.name === 'text' && !t.value.trim()) {
@@ -590,14 +411,6 @@ export default {
         });
         return;
       }
-      if (act === 'collapse') {
-        // The sub-items slide closed, or slide open once drawn.
-        const id = b.closest('li[data-id]').dataset.id;
-        const kidRows = () => { const out = []; for (let r = body.querySelector(`.checklist > li[data-id="${id}"]`)?.nextElementSibling; r && !(r.matches('li[data-id]') && r.dataset.depth === '0'); r = r.nextElementSibling) out.push(r); return out; };
-        if (collapsed.has(id)) { collapsed.delete(id); await render(); slideRows(kidRows(), true); }
-        else { await slideRows(kidRows(), false); collapsed.add(id); render(); }
-        return;
-      }
       if (act === 'item-details') return toggleItem(b.closest('li[data-id], li[data-for]').dataset.id || b.closest('li[data-for]').dataset.for);
       if (act === 'close-item') return toggleItem(openItem);
       if (act === 'archive-item') {
@@ -642,8 +455,6 @@ export default {
   },
 
   unmount() {
-    this.gone?.abort();
-    this.topWatch?.disconnect();
     this.kitChecklist?.destroy();
     this.pills?.destroy();
     this.kitTemplate?.destroy();

@@ -27,7 +27,6 @@ import { word } from '../words.js';
 import { commentsHtml, mountComments, closingComment } from '../comments.js';
 import { REPEAT_CHOICES, choiceOf, repeatLabel, firstDate } from '../repeat.js';
 import { keys } from '../keys.js';
-import { treeHtml, groupOf, measureRows, slideRows } from '../rows.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const icon = id => `<svg class="icon" aria-hidden="true"><use href="#${id}"/></svg>`;
@@ -36,6 +35,8 @@ const LISTS = ['inbox', 'now', 'next', 'later'];   // where a task lives
 const EMPTY = { get inbox() { return `${word('list_inbox')} is empty.`; }, now: 'Nothing for now.', next: 'Nothing lined up next.', later: 'Nothing for later.' };
 // 👁 Layout switches (viewcog.js), all off by default.
 const lay = id => layoutOn('tasks', id);
+// Without the lined paper (cards, as in earlier versions) the New task box is always at the top.
+const entryOnTop = () => lay('new-top') || !lay('lined');
 // Highlight item when added (👁 Layout): the new tasks pulse once, soft blue (flash.js), and
 // the list scrolls to them if they're out of view.
 const showAdded = (root, ids) => { if (lay('added-flash')) ids.forEach((id, n) => flash(root.querySelector(`.task-list > li[data-task="${id}"]`), Object.assign({ scroll: n ? false : 'nearest' }, SOFT))); };
@@ -257,16 +258,15 @@ export default {
           </div>
           <div class="task-entry-more">
             <div id="task-new-note" class="add-note" data-ctrl-enter="keep"></div>
-            <div class="entry-actions pill-row">
+            <div class="entry-actions">
               <button type="button" class="entry-chip" data-chip="energy" aria-haspopup="menu"><span class="chip-glyph">⚡</span> <span class="chip-text" data-empty="Energy">Energy</span></button>
               <input type="hidden" data-entry="energy" value="">
-              <label class="entry-chip" data-chip="estimate_min">⏱ <span class="chip-text" data-empty="Estimated time">Estimated time</span>
-                <select data-entry="estimate_min" aria-label="Estimated time"><option value="">Not estimated</option>${durationChoices(480).map(m => opt(m, durationLabel(m))).join('')}</select></label>
               ${dateChip('start_date', 'Plan for day', '📅')}
               ${dateChip('aim_date', 'Target end date', '⚑')}
+              <label class="entry-chip" data-chip="estimate_min">⏱ <span class="chip-text" data-empty="Estimated time">Estimated time</span>
+                <select data-entry="estimate_min" aria-label="Estimated time"><option value="">Not estimated</option>${durationChoices(480).map(m => opt(m, durationLabel(m))).join('')}</select></label>
               <label class="entry-chip" data-chip="horizon">📥 <span class="chip-text" data-empty="${esc(listName || word('list_inbox'))}">${esc(listName || word('list_inbox'))}</span>
                 <select data-entry="horizon" aria-label="Which list">${HORIZONS.map(x => opt(x.id, x.label, x.label === (listName || word('list_inbox')))).join('')}</select></label>
-              <button type="button" class="entry-chip pill-more" data-act="entry-panel" title="Add it and open its full panel">More…</button>
             </div>
             <p class="muted hint">${esc(word('ph_tasks_entry'))}</p>
           </div>
@@ -278,9 +278,43 @@ export default {
     const head = (html, attrs = '') => `<li class="list-head"${attrs}>${html}</li>`;
     // A task and its sub-tasks share one card: the parent opens it, sub-tasks
     // sit inside, the last one closes it.
-    const treeOf = (tasks, n) => treeHtml(tasks, n, lay('margin'));
+    // Lines joining a task to its sub-tasks: from just under the task's tick
+    // box, down and across to each sub-task's tick box, an L that carries on
+    // down while more sub-tasks follow. Level k's line runs down the middle of
+    // the tick boxes one level up (the page measures where they sit: CSS
+    // --tick-top / --tick-h on the list).
+    // With the margin shown (👁 Layout) every tick box sits in the margin and
+    // only the text is indented. The line then drops from the ruled line under
+    // the task, down the left of each sub-task, and turns along the sub-task's
+    // own ruled line (which starts there): the joining lines are the ruled
+    // lines, so they never cross them. Level k's line is under the first letter
+    // of the text one level up (CSS: the ruled lines start at 50px + indent).
+    const treeX = k => 49 + (k - 1) * 28;
+    const treeOf = (tasks, n) => {
+      const depthAt = j => tasks[j]?.depth ?? 0;
+      // Does a later row at depth k follow before the family ends?
+      const goesOn = k => { for (let j = n + 1; j < tasks.length; j++) { const dj = depthAt(j); if (dj < k) return false; if (dj === k) return true; } return false; };
+      const d = depthAt(n);
+      const v = (k, top, bottom) => `<i class="tree-v" style="left:${treeX(k)}px;top:${top};bottom:${bottom}"></i>`;
+      const parts = [];
+      if (lay('margin')) {
+        for (let k = 1; k <= d; k++) if (k === d || goesOn(k)) parts.push(`<i class="tree-v" style="left:calc(${50 + k * 28}px + var(--mshift, 0px));top:0;bottom:0"></i>`);
+        return parts.length ? `<span class="tree" aria-hidden="true">${parts.join('')}</span>` : '';
+      }
+      for (let k = 1; k < d; k++) if (goesOn(k)) parts.push(v(k, '0', '0'));
+      if (d > 0) {
+        parts.push(v(d, '0', goesOn(d) ? '0' : 'calc(100% - var(--tick-top) - var(--tick-h) / 2)'));
+        parts.push(`<i class="tree-h" style="left:${treeX(d)}px;width:${40 + d * 28 - 4 - treeX(d)}px"></i>`);
+      }
+      if (depthAt(n + 1) === d + 1 && n + 1 < tasks.length) parts.push(v(d + 1, 'calc(var(--tick-top) + var(--tick-h) + 4px)', '0'));
+      return parts.length ? `<span class="tree" aria-hidden="true">${parts.join('')}</span>` : '';
+    };
     const rowsOf = (tasks, opts) => tasks.map((t, n) => {
-      return row(t, { ...opts, group: groupOf(tasks, n), tree: treeOf(tasks, n) });
+      const d = t.depth ?? 0;
+      const next = tasks[n + 1];
+      const nd = next ? next.depth ?? 0 : 0;
+      const group = d === 0 ? (nd > 0 ? 'group-top' : '') : `group-kid${nd === 0 ? ' group-end' : ''}`;
+      return row(t, { ...opts, group, tree: treeOf(tasks, n) });
     }).join('');
     const listOf = (inner, empty = '') => (inner ? `<ul class="task-list">${inner}</ul>` : empty);
 
@@ -351,8 +385,9 @@ export default {
         html += listOf(rowsOf(tasks));
         entry = addBox(ph, !tasks.length, word('list_inbox'));
       }
-      // The New task line is at the top: before the list, after the project's heading.
-      html = html.replace('<!--list-->', entry);
+      // New task line at the top (👁 Layout): before the list, after the project's heading.
+      if (entryOnTop()) html = html.replace('<!--list-->', entry); else html += entry;
+      html = html.replace('<!--list-->', '');
       const doneCount = scoped.filter(isDone).length;
       if (doneCount) html += `<p class="muted done-toggle"><button type="button" data-act="toggle-done">${state.showDone ? 'Hide' : 'Show'} ${doneCount} done</button></p>`;
       return html;
@@ -371,7 +406,7 @@ export default {
       const body = (urgent.length ? head('Due or planned') + flat(urgent) + (rest.length ? head('Everything else') : '') : '') + flat(rest);
       const label = HORIZONS.find(x => x.id === h).label;
       const entry = addBox(h === 'inbox' ? 'New task' : `New task for ${word(`list_${h}`)}`, !open.length, label);
-      return entry + listOf(open.length ? body : '');
+      return entryOnTop() ? entry + listOf(open.length ? body : '') : listOf(open.length ? body : '') + entry;
     }
 
     function viewProjects() {
@@ -445,17 +480,27 @@ export default {
       else nextAfter = id; // opens once the saved title is redrawn
     }, { capture: true });
 
-    // The joining lines again, from the rows as they are now (with a new line in).
+    // The joining lines again, from the rows as they are now (with a new line
+    // in, and the New task line under the list when it's a sub-task).
     function redrawTrees() {
       const ul = body.querySelector('.task-list');
       if (!ul) return;
       const rows = [...ul.querySelectorAll(':scope > li[data-task]')];
-      const depths = rows.map(li => ({ depth: Number(li.dataset.depth || 0) }));
+      const line = ul.nextElementSibling?.id === 'task-entry' ? ul.nextElementSibling.querySelector('.task-add-line') : null;
+      const tail = line && entryDepth > 0 ? [{ depth: entryDepth }] : [];
+      const depths = [...rows.map(li => ({ depth: Number(li.dataset.depth || 0) })), ...tail];
       rows.forEach((li, n) => {
         li.querySelector(':scope > .tree')?.remove();
         const html = treeOf(depths, n);
         if (html) li.insertAdjacentHTML('afterbegin', html);
       });
+      line?.querySelector(':scope > .tree')?.remove();
+      if (!tail.length) return;
+      // Where its tick box sits, as for a task row (the lines meet its middle).
+      const mark = line.querySelector('.add-mark');
+      const m = mark.getBoundingClientRect(), l = line.getBoundingClientRect();
+      if (m.height > 0) { line.style.setProperty('--tick-top', `${m.top - l.top}px`); line.style.setProperty('--tick-h', `${m.height}px`); }
+      line.insertAdjacentHTML('afterbegin', treeOf(depths, depths.length - 1));
     }
 
     // Shift+Tab in a task's note (under its name, while editing) goes back to
@@ -562,7 +607,26 @@ export default {
       fillDates(body);
       wireEntry();
       const ul = body.querySelector('.task-list');
-      measureRows(body, ul, body.querySelector('#task-new'));
+      // Where tick boxes sit in a row, for the lines joining sub-tasks (CSS).
+      const tk = ul?.querySelector(':scope > li[data-task] .tick');
+      if (tk) {
+        const t = tk.getBoundingClientRect();
+        const top = t.top - tk.closest('li').getBoundingClientRect().top;
+        if (t.height > 0 && top >= 0) { ul.style.setProperty('--tick-top', `${top}px`); ul.style.setProperty('--tick-h', `${t.height}px`); }
+      }
+      // Where a task's text starts, so its pills and "Add note" line (while
+      // editing) start there too, at any width (CSS --title-x, --entry-x).
+      const textX = (input, box) => {
+        const b = box.getBoundingClientRect(), cs = getComputedStyle(box);
+        return input.getBoundingClientRect().left + parseFloat(getComputedStyle(input).paddingLeft) - b.left - parseFloat(cs.paddingLeft) - parseFloat(cs.borderLeftWidth);
+      };
+      const ti = ul?.querySelector(':scope > li[data-task][data-depth="0"] > .task-title');
+      if (ti) { const x = textX(ti, ti.closest('li')); if (x > 0) body.style.setProperty('--title-x', `${x}px`); }
+      const nt = body.querySelector('#task-new'), en = nt?.closest('.task-entry');
+      if (nt && en) { const x = textX(nt, en) - (parseFloat(en.style.getPropertyValue('--ind')) || 0); if (x > 0) body.style.setProperty('--entry-x', `${x}px`); }
+      // Every line the same height: the New task line matches a plain task row (CSS --task-row-h).
+      const plain = [...(ul?.querySelectorAll(':scope > li[data-task]') || [])].map(li => li.getBoundingClientRect().height).filter(h => h > 0);
+      if (plain.length) body.style.setProperty('--task-row-h', `${Math.min(...plain)}px`);
       const ordered = state.view === 'list';
       const flatOrder = LISTS.includes(state.view); // Task Dump, Now, Next, Later: drag to reorder, no nesting
       kitOrdered.attach(ordered ? ul : null);
@@ -668,7 +732,7 @@ export default {
         .filter(li => li.getClientRects().length && li.querySelector(':scope > .task-title'))
         .map(li => ({ li, key: li.dataset.task, title: li.querySelector(':scope > .task-title') }));
       const nt = body.querySelector('#task-new');
-      if (nt?.getClientRects().length) stops.unshift({ key: 'entry', title: nt });
+      if (nt?.getClientRects().length) stops[entryOnTop() ? 'unshift' : 'push']({ key: 'entry', title: nt });
       return stops;
     };
     function walkApply(stop, part, at) {
@@ -767,7 +831,6 @@ export default {
         await store.updateMany('tasks', made.map(id => [id, { deleted_at: new Date().toISOString() }]));
         await render();
       });
-      return made;
     }
 
     // Open the new-task entry (on an empty page it unfolds from the ＋) and put the cursor in it.
@@ -837,11 +900,18 @@ export default {
       // Its level: "- " at the start, or Tab / Shift+Tab, make it a sub-task
       // (of the last task above) or bring it back out, straight away.
       const rowsNow = () => [...body.querySelectorAll('.task-list > li[data-task][data-id]')];
+      // At the top (👁 Layout) there's nothing above it to go under.
+      const onTop = entryOnTop();
+      const deepest = () => { const last = !onTop && rowsNow().at(-1); return last ? Math.min(MAX_DEPTH, Number(last.dataset.depth || 0) + 1) : 0; };
       const setDepth = d => { entryDepth = d; entry.dataset.depth = d; entry.style.setProperty('--ind', `${d * 28}px`); redrawTrees(); };
-      setDepth(0);
+      setDepth(Math.min(entryDepth, deepest()));
       const parentAt = d => (d ? [...rowsNow()].reverse().find(li => Number(li.dataset.depth || 0) === d - 1)?.dataset.task || null : null);
-      // At the top there's nothing above it to go under.
-      const deeper = () => { toast('Nothing above to go under'); return false; };
+      const deeper = () => {
+        if (onTop || !rowsNow().length) { toast('Nothing above to go under'); return false; }
+        if (entryDepth >= deepest()) { toast(entryDepth >= MAX_DEPTH ? 'Sub-tasks go three levels deep at most' : 'Already as far in as it goes here'); return false; }
+        setDepth(entryDepth + 1);
+        return true;
+      };
       ta.addEventListener('input', () => {
         const m = ta.value.match(/^[-*•] /);
         if (!m) return;
@@ -1178,17 +1248,6 @@ export default {
       if (!b) return;
       if (b.dataset.view) { b.closest('details')?.removeAttribute('open'); state.project = null; go(b.dataset.view, null); return; }
       if (b.dataset.act === 'focus-entry') { focusEntry(); return; }
-      // More… on the New task line (as a task's own More… opens its panel): it's added, and its panel opens.
-      if (b.dataset.act === 'entry-panel' || (b.dataset.act === 'entry-reveal' && lay('more-panel'))) {
-        const made = await body.querySelector('#task-entry')?.submitEntry?.({ focus: false });
-        if (!made?.length) { body.querySelector('#task-new')?.focus(); return; }
-        document.activeElement?.blur();
-        await flushNote();
-        open = made[0];
-        await render();
-        body.querySelector(`.task-list > li[data-task="${open}"]`)?.scrollIntoView({ block: 'start' });
-        return;
-      }
       if (b.dataset.act === 'entry-reveal') { b.closest('.task-entry').classList.add('revealed'); body.querySelector('#task-new')?.focus(); return; }
       if (b.dataset.act === 'note-shown') { const row = b.closest('li[data-task]'); walkGo({ li: row, key: row.dataset.task, title: row.querySelector(':scope > .task-title') }, 'note', 0); return; }
       if (b.dataset.act === 'pills-reveal') {
@@ -1272,6 +1331,16 @@ export default {
       for (let r = li.nextElementSibling; r && !(r.matches('li[data-task]') && Number(r.dataset.depth || 0) <= d) && !r.matches('.list-head'); r = r.nextElementSibling) out.push(r);
       return out;
     }
+    // Rows sliding open (from nothing to their height) or closed.
+    const slideRows = (rows, opening) => Promise.all(rows.map(r => {
+      const cs = getComputedStyle(r);
+      const full = { height: `${r.offsetHeight}px`, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, opacity: 1 };
+      const none = { height: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0 };
+      r.style.overflow = 'hidden'; r.style.minHeight = '0';
+      const anim = r.animate(opening ? [none, full] : [full, none], { duration: 220, easing: 'ease-in-out', fill: opening ? 'none' : 'forwards' });
+      return anim.finished.then(() => { if (opening) { r.style.overflow = ''; r.style.minHeight = ''; } }, () => {});
+    }));
+
     // Delete or archive a task, with its sub-tasks.
     async function retire(task, act) {
       const field = act === 'delete' ? 'deleted_at' : 'archived_at';
